@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DS banner maker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="index.css?v=__COMMIT_HASH__">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.css">
+</head>
+<body>
+  <main class="container">
+    <!-- App Header (Clean & Compact) -->
+    <header class="app-header">
+      <h1>DS banner maker</h1>
+      <p>Create custom icons and menu titles for Nintendo DS homebrew&nbsp;ROMs.</p>
+    </header>
+
+    <div class="builder-content">
+      <!-- Step 1: Icon Design Card -->
+      <section class="panel step-card">
+        <h2 class="step-title">1. Icon Design</h2>
+        
+        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload icon image">
+          <input type="file" id="file-input" accept="image/*" tabindex="-1">
+          <div class="dropzone-content">
+            <svg class="upload-icon" viewBox="0 0 24 24" width="24" height="24">
+              <path fill="currentColor" d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+            </svg>
+            <p id="dropzone-prompt" class="dropzone-text">Click or drop an <strong class="highlight">icon image</strong> here</p>
+            <div class="dropzone-preview-wrapper">
+              <canvas id="crop-preview-canvas" width="96" height="96" class="dropzone-preview hidden"></canvas>
+              <p id="dropzone-filename" class="dropzone-filename hidden"></p>
+            </div>
+          </div>
+        </div>
+
+        <div id="error-box" class="message-card error-card hidden" role="alert">
+          <p id="error-message"></p>
+        </div>
+
+        <!-- Crop mode selector and adjustment panel -->
+        <div id="crop-control" class="crop-control hidden">
+          <div class="crop-mode-row">
+            <span class="crop-label">Layout mode</span>
+            <div class="crop-mode-options">
+              <button type="button" id="btn-mode-crop" class="mode-btn active" aria-label="Crop image 1:1 visually">Crop</button>
+              <button type="button" id="btn-mode-fit" class="mode-btn" aria-label="Fit entire image with white background padding">Fit</button>
+            </div>
+          </div>
+          
+          <div id="cropper-wrapper" class="cropper-wrapper">
+            <div class="crop-editor-container">
+              <img id="crop-editor-img" class="crop-editor-img" alt="Source image for cropping">
+            </div>
+            <p class="crop-help-text">Drag to move • Use mouse wheel/pinch to zoom</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Transparency Handling Info Card -->
+      <div id="transparency-info" class="message-card info-card hidden" role="note">
+        <div class="info-card-header">
+          <span class="info-card-icon">💡</span>
+          <span class="info-card-title">Transparency Detected</span>
+        </div>
+        <p class="info-card-text">
+          Your icon contains transparent pixels:
+          <br>• <strong>Pure transparency</strong> (opacity = 0) is mapped to palette slot 0 (rendered as true hardware transparency on&nbsp;console).
+          <br>• <strong>Semi-transparency</strong> (opacity &gt; 0) is blended against a white background to prevent dark outline&nbsp;halos.
+        </p>
+      </div>
+
+      <!-- Step 2: Rom Metadata Card -->
+      <section class="panel step-card">
+        <h2 class="step-title">2. Rom Metadata</h2>
+        
+        <form class="metadata-form" onsubmit="return false;">
+          <div class="input-group">
+            <div class="label-row">
+              <label for="input-title">Game title</label>
+              <span class="tooltip-trigger" tabindex="0" data-tip="The main game name shown in bold. Keep it under 28 characters to avoid&nbsp;clipping." aria-label="Game title help info">ℹ️</span>
+            </div>
+            <input type="text" id="input-title" maxlength="40" placeholder="e.g. Space Raiders" autocomplete="off">
+          </div>
+
+          <div class="input-group">
+            <div class="label-row">
+              <label for="input-subtitle">Subtitle <span class="optional">(optional)</span></label>
+              <span class="tooltip-trigger" tabindex="0" data-tip="Additional lines of text, such as version numbers, release dates, or&nbsp;translators." aria-label="Subtitle help info">ℹ️</span>
+            </div>
+            <input type="text" id="input-subtitle" maxlength="45" placeholder="e.g. Version 1.0" autocomplete="off">
+          </div>
+
+          <div class="input-group">
+            <div class="label-row">
+              <label for="input-author">Author / Publisher <span class="optional">(optional)</span></label>
+              <span class="tooltip-trigger" tabindex="0" data-tip="The creator's name or publishing company displayed on the bottom&nbsp;line." aria-label="Author help info">ℹ️</span>
+            </div>
+            <input type="text" id="input-author" maxlength="40" placeholder="e.g. Jane Doe" autocomplete="off">
+          </div>
+        </form>
+      </section>
+
+      <!-- Step 3: Preview & Export -->
+      <section class="panel preview-card">
+        <div class="step-title-row">
+          <h2 class="step-title-inline">3. Preview & Export</h2>
+          <div class="preview-scale-selector">
+            <button type="button" id="btn-scale-1x" class="scale-btn active" aria-label="1 times scale">1×</button>
+            <button type="button" id="btn-scale-2x" class="scale-btn" aria-label="2 times scale">2×</button>
+          </div>
+        </div>
+
+        <!-- Console Mockup -->
+        <div class="console-mockup">
+          <div class="ds-menu-item">
+            <div class="ds-icon-slot">
+              <div class="ds-icon-canvas-bg"></div>
+              <canvas id="preview-canvas" width="256" height="256"></canvas>
+            </div>
+            
+            <div class="ds-text-slot">
+              <div id="mock-title" class="mock-title">Untitled game</div>
+              <div id="mock-subtitle" class="mock-subtitle">No subtitle</div>
+              <div id="mock-author" class="mock-author">No author</div>
+            </div>
+          </div>
+        </div>
+        
+        <p class="explanation-note">
+          Automatic 32×32px downscaling and 16-color quantization applied.
+        </p>
+
+        <div class="divider"></div>
+
+        <!-- Action Buttons -->
+        <div class="action-row">
+          <button id="reset-btn" class="reset-btn" aria-label="Reset all inputs and file">Reset</button>
+          <button id="download-btn" class="download-btn" disabled aria-label="Download compiled binary">
+            Download banner.bin
+          </button>
+        </div>
+        <!-- Hidden canvas for 32x32 image processing -->
+        <canvas id="resize-canvas" width="32" height="32" style="display:none"></canvas>
+      </section>
+    </div>
+
+    <!-- Instructions Footer -->
+    <footer class="app-footer">
+      <p>Replace the <code>banner.bin</code> inside your homebrew source and compile.</p>
+    </footer>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.2/cropper.min.js"></script>
+  <script type="module" src="app.js?v=__COMMIT_HASH__"></script>
+</body>
+</html>
