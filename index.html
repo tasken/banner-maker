@@ -12,16 +12,28 @@
 </head>
 <body>
   <main class="container">
-    <!-- App Header (Clean & Compact) -->
+    <!-- App Header -->
     <header class="app-header">
       <h1>DS banner maker</h1>
       <p>Create custom icons and menu titles for Nintendo DS homebrew&nbsp;ROMs.</p>
     </header>
 
-    <div class="builder-content">
-      <!-- Step 1: Icon Design Card -->
-      <section class="panel step-card">
-        <h2 class="step-title">1. Icon Design</h2>
+    <!-- Icon Specs Introduction -->
+    <div class="message-card info-card">
+      <div class="info-card-header">
+        <span class="info-card-title">Icon specs</span>
+      </div>
+      <p class="info-card-text">
+        DS icons are <strong>32 x 32 px</strong> with only <strong>16 colors</strong>.
+        Color at index 0 is reserved for transparency.
+        This tool downscales and quantizes any image automatically, but starting with a
+        matching image gives sharper results.
+      </p>
+    </div>
+
+    <!-- Icon -->
+    <section class="panel step-card">
+        <h2 class="step-title">Upload image</h2>
         
         <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload icon image">
           <input type="file" id="file-input" accept="image/*" tabindex="-1">
@@ -37,17 +49,21 @@
           </div>
         </div>
 
+        <p class="upload-tip">Tip: Use a pixel art editor to draw your icon at 32 x 32 with a
+        16-color palette. Set your transparent background to a distinct color and this tool
+        will recognize it automatically.</p>
+
         <div id="error-box" class="message-card error-card hidden" role="alert">
           <p id="error-message"></p>
         </div>
 
         <!-- Crop mode selector and adjustment panel -->
         <div id="crop-control" class="crop-control hidden">
-          <div class="crop-mode-row">
+          <div class="label-row">
             <span class="crop-label">Layout mode</span>
-            <div class="crop-mode-options">
-              <button type="button" id="btn-mode-crop" class="mode-btn active" aria-label="Crop image 1:1 visually">Crop</button>
-              <button type="button" id="btn-mode-fit" class="mode-btn" aria-label="Fit entire image with white background padding">Fit</button>
+            <div class="pill-group">
+              <button type="button" id="btn-mode-crop" class="pill-btn active" aria-label="Crop image 1:1 visually">Crop</button>
+              <button type="button" id="btn-mode-fit" class="pill-btn" aria-label="Fit entire image with white background padding">Fit</button>
             </div>
           </div>
           
@@ -55,7 +71,7 @@
             <div class="crop-editor-container">
               <img id="crop-editor-img" class="crop-editor-img" alt="Source image for cropping">
             </div>
-            <p class="crop-help-text">Drag to move • Use mouse wheel/pinch to zoom</p>
+            <p class="crop-help-text">Drag to move &bull; Use mouse wheel/pinch to zoom</p>
           </div>
         </div>
       </section>
@@ -63,25 +79,24 @@
       <!-- Transparency Handling Info Card -->
       <div id="transparency-info" class="message-card info-card hidden" role="note">
         <div class="info-card-header">
-          <span class="info-card-icon">💡</span>
           <span class="info-card-title">Transparency Detected</span>
         </div>
         <p class="info-card-text">
-          Your icon contains transparent pixels:
-          <br>• <strong>Pure transparency</strong> (opacity = 0) is mapped to palette slot 0 (rendered as true hardware transparency on&nbsp;console).
-          <br>• <strong>Semi-transparency</strong> (opacity &gt; 0) is blended against a white background to prevent dark outline&nbsp;halos.
+          Your icon has transparent pixels:
+          <br>&bull; <strong>Fully transparent</strong> (opacity 0) maps to palette index 0, rendered as true hardware transparency on&nbsp;DS.
+          <br>&bull; <strong>Semi-transparent</strong> pixels are blended against white to avoid dark outline&nbsp;halos.
         </p>
       </div>
 
-      <!-- Step 2: Rom Metadata Card -->
+      <!-- Title -->
       <section class="panel step-card">
-        <h2 class="step-title">2. Rom Metadata</h2>
+        <h2 class="step-title">Enter title</h2>
         
         <form class="metadata-form" onsubmit="return false;">
           <div class="input-group">
             <div class="label-row">
               <label for="input-title">Game title</label>
-              <span class="tooltip-trigger" tabindex="0" data-tip="The main game name shown in bold. Keep it under 28 characters to avoid&nbsp;clipping." aria-label="Game title help info">ℹ️</span>
+              <span class="tooltip-trigger" tabindex="0" data-tip="The main game name shown in bold. Keep it under 28 characters to avoid&nbsp;clipping." aria-label="Game title help info">&#x2139;&#xfe0f;</span>
             </div>
             <input type="text" id="input-title" maxlength="40" placeholder="e.g. Space Raiders" autocomplete="off">
           </div>
@@ -89,7 +104,7 @@
           <div class="input-group">
             <div class="label-row">
               <label for="input-subtitle">Subtitle <span class="optional">(optional)</span></label>
-              <span class="tooltip-trigger" tabindex="0" data-tip="Additional lines of text, such as version numbers, release dates, or&nbsp;translators." aria-label="Subtitle help info">ℹ️</span>
+              <span class="tooltip-trigger" tabindex="0" data-tip="Additional lines of text, such as version numbers, release dates, or&nbsp;translators." aria-label="Subtitle help info">&#x2139;&#xfe0f;</span>
             </div>
             <input type="text" id="input-subtitle" maxlength="45" placeholder="e.g. Version 1.0" autocomplete="off">
           </div>
@@ -97,20 +112,20 @@
           <div class="input-group">
             <div class="label-row">
               <label for="input-author">Author / Publisher <span class="optional">(optional)</span></label>
-              <span class="tooltip-trigger" tabindex="0" data-tip="The creator's name or publishing company displayed on the bottom&nbsp;line." aria-label="Author help info">ℹ️</span>
+              <span class="tooltip-trigger" tabindex="0" data-tip="The creator's name or publishing company displayed on the bottom&nbsp;line." aria-label="Author help info">&#x2139;&#xfe0f;</span>
             </div>
             <input type="text" id="input-author" maxlength="40" placeholder="e.g. Jane Doe" autocomplete="off">
           </div>
         </form>
       </section>
 
-      <!-- Step 3: Preview & Export -->
+      <!-- Preview & Export -->
       <section class="panel preview-card">
         <div class="step-title-row">
-          <h2 class="step-title-inline">3. Preview & Export</h2>
-          <div class="preview-scale-selector">
-            <button type="button" id="btn-scale-1x" class="scale-btn active" aria-label="1 times scale">1×</button>
-            <button type="button" id="btn-scale-2x" class="scale-btn" aria-label="2 times scale">2×</button>
+          <h2 class="step-title-inline">Preview</h2>
+          <div class="pill-group">
+            <button type="button" id="btn-scale-1x" class="pill-btn active" aria-label="1 times scale">1x</button>
+            <button type="button" id="btn-scale-2x" class="pill-btn" aria-label="2 times scale">2x</button>
           </div>
         </div>
 
@@ -131,7 +146,7 @@
         </div>
         
         <p class="explanation-note">
-          Automatic 32×32px downscaling and 16-color quantization applied.
+          Your image is automatically resized to 32x32 and reduced to 16 colors.
         </p>
 
         <div class="divider"></div>
@@ -146,7 +161,6 @@
         <!-- Hidden canvas for 32x32 image processing -->
         <canvas id="resize-canvas" width="32" height="32" style="display:none"></canvas>
       </section>
-    </div>
 
     <!-- Instructions Footer -->
     <footer class="app-footer">
