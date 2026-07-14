@@ -6,7 +6,7 @@
   --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* Surfaces */
+  /* Default Light Theme variables */
   --bg: #ffffff;
   --bg-secondary: #f3f4f6;
   --bg-input: #ffffff;
@@ -60,6 +60,95 @@
   --console-card-border: #e5e7eb;
   --console-card-subtext: #4b5563;
   --console-card-muted: #9ca3af;
+  --dropzone-bg: #faf5ff;
+}
+
+/* Explicit Dark Theme */
+[data-theme="dark"] {
+  --bg: #1f2937;
+  --bg-secondary: #111827;
+  --bg-input: #111827;
+
+  --fg: #f9fafb;
+  --fg-secondary: #9ca3af;
+  --fg-muted: #6b7280;
+
+  --border: #374151;
+  --input-border: #4b5563;
+
+  --violet: #a78bfa;
+  --violet-light: #2e1065;
+  --violet-border: #4c1d95;
+
+  --info: #a78bfa;
+  --info-bg: #2e1065;
+  --info-border: #4c1d95;
+
+  --error: #fca5a5;
+  --error-bg: #7f1d1d;
+  --error-border: #b91c1c;
+  --error-text: #fca5a5;
+
+  --success: #34d399;
+  --success-bg: #064e3b;
+  --success-border: #047857;
+  --success-text: #86efac;
+
+  --warning: #fde047;
+  --warning-bg: #78350f;
+  --warning-border: #b45309;
+  --warning-text: #fef08a;
+
+  --console-card-bg: #111827;
+  --console-card-border: #374151;
+  --console-card-subtext: #cbd5e1;
+  --console-card-muted: #6b7280;
+  --dropzone-bg: #1e1430;
+}
+
+/* System Preferences Auto Dark Theme */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1f2937;
+    --bg-secondary: #111827;
+    --bg-input: #111827;
+
+    --fg: #f9fafb;
+    --fg-secondary: #9ca3af;
+    --fg-muted: #6b7280;
+
+    --border: #374151;
+    --input-border: #4b5563;
+
+    --violet: #a78bfa;
+    --violet-light: #2e1065;
+    --violet-border: #4c1d95;
+
+    --info: #a78bfa;
+    --info-bg: #2e1065;
+    --info-border: #4c1d95;
+
+    --error: #fca5a5;
+    --error-bg: #7f1d1d;
+    --error-border: #b91c1c;
+    --error-text: #fca5a5;
+
+    --success: #34d399;
+    --success-bg: #064e3b;
+    --success-border: #047857;
+    --success-text: #86efac;
+
+    --warning: #fde047;
+    --warning-bg: #78350f;
+    --warning-border: #b45309;
+    --warning-text: #fef08a;
+
+    --console-card-bg: #111827;
+    --console-card-border: #374151;
+    --console-card-subtext: #cbd5e1;
+    --console-card-muted: #6b7280;
+    --dropzone-bg: #1e1430;
+  }
 }
 
 /* Reset */
@@ -123,17 +212,13 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
-/* Step titles (shared base) */
-.step-title,
-.step-title-inline {
+/* Step titles */
+.step-title {
   font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--fg-muted);
-}
-
-.step-title {
   margin-top: 0;
   margin-bottom: 0;
   border-bottom: 1px solid var(--border);
@@ -150,8 +235,9 @@ body {
   width: 100%;
 }
 
-.step-title-inline {
-  margin: 0;
+.step-title-row .step-title {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 /* Checkerboard utility */
@@ -198,7 +284,7 @@ body {
 /* Dropzone */
 .dropzone {
   border: 2px dashed var(--violet-border);
-  background-color: #faf5ff;
+  background-color: var(--dropzone-bg);
   padding: 24px 16px;
   text-align: center;
   cursor: pointer;
@@ -220,6 +306,8 @@ body {
   color: var(--violet);
   margin-bottom: 8px;
   transition: transform 0.2s ease;
+  font-size: 24px !important;
+  display: inline-block;
 }
 
 .dropzone:hover .upload-icon {
@@ -297,11 +385,17 @@ body {
   max-height: 200px;
 }
 
-.crop-help-text {
+.help-text {
   font-size: 0.78rem;
+  line-height: 1.4;
   color: var(--fg-muted);
-  margin-top: 6px;
   text-align: center;
+  text-wrap: balance;
+  margin: 0;
+}
+
+.crop-help-text {
+  margin-top: 6px;
 }
 
 /* Cropper.js overrides */
@@ -381,11 +475,18 @@ body {
 /* Tooltips */
 .tooltip-trigger {
   cursor: help;
-  font-size: 0.78rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0.4;
   position: relative;
   user-select: none;
   transition: opacity 0.12s ease;
+}
+
+.tooltip-icon {
+  font-size: 15px !important;
+  line-height: 1;
 }
 
 .tooltip-trigger:hover, .tooltip-trigger:focus, .tooltip-trigger:focus-visible {
@@ -404,8 +505,8 @@ body {
   bottom: calc(100% + 8px);
   right: -6px;
   width: 210px;
-  background-color: var(--fg);
-  border: none;
+  background-color: #111827;
+  border: 1px solid #374151;
   color: #ffffff;
   padding: 8px 10px;
   border-radius: 8px;
@@ -503,9 +604,7 @@ body {
 /* Console mockup */
 .console-mockup {
   background-color: var(--bg-secondary);
-  border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 12px;
   display: flex;
   justify-content: center;
 }
@@ -661,13 +760,7 @@ body {
   cursor: not-allowed;
 }
 
-.explanation-note {
-  font-size: 0.78rem;
-  line-height: 1.4;
-  color: var(--fg-muted);
-  text-align: center;
-  margin: 0;
-}
+
 
 .upload-tip {
   font-size: 0.78rem;
@@ -684,12 +777,64 @@ body {
   line-height: 1.45;
 }
 
-.app-footer code {
+code {
   font-family: var(--font-mono);
   background-color: var(--bg-secondary);
-  padding: 1px 4px;
+  padding: 2px 4px;
   border-radius: 4px;
-  font-size: 0.72rem;
+  font-size: 0.85em;
+}
+
+.app-footer code {
+  background-color: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.header-main-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.theme-selector {
+  display: flex;
+  background-color: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.theme-btn {
+  background: transparent;
+  border: none;
+  font-size: 13px;
+  padding: 4px;
+  border-radius: 50%;
+  cursor: pointer;
+  outline: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+  width: 24px;
+  height: 24px;
+  color: var(--fg-secondary);
+}
+
+.theme-btn .material-symbols-outlined {
+  font-size: 15px !important;
+}
+
+.theme-btn:hover {
+  background-color: var(--bg-secondary);
+  color: var(--fg);
+}
+
+.theme-btn.active {
+  background-color: var(--violet);
+  color: #ffffff !important;
 }
 
 .hidden {

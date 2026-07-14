@@ -32,6 +32,33 @@ const dsIconSlot = document.querySelector('.ds-icon-slot');
 const btnScale1x = document.getElementById('btn-scale-1x');
 const btnScale2x = document.getElementById('btn-scale-2x');
 
+// Theme selectors
+const btnThemeLight = document.getElementById('btn-theme-light');
+const btnThemeSystem = document.getElementById('btn-theme-system');
+const btnThemeDark = document.getElementById('btn-theme-dark');
+
+function applyTheme(theme) {
+  btnThemeLight.classList.toggle('active', theme === 'light');
+  btnThemeSystem.classList.toggle('active', theme === 'system');
+  btnThemeDark.classList.toggle('active', theme === 'dark');
+
+  if (theme === 'system') {
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.removeItem('theme-preference');
+  } else {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme-preference', theme);
+  }
+}
+
+// Initialize theme
+const savedTheme = localStorage.getItem('theme-preference') || 'system';
+applyTheme(savedTheme);
+
+btnThemeLight.addEventListener('click', () => applyTheme('light'));
+btnThemeSystem.addEventListener('click', () => applyTheme('system'));
+btnThemeDark.addEventListener('click', () => applyTheme('dark'));
+
 const resizeCtx = resizeCanvas.getContext('2d');
 const previewCtx = previewCanvas.getContext('2d');
 
@@ -214,11 +241,18 @@ function handleFileSelect() {
       // Set image source for the Cropper editor
       cropEditorImg.src = event.target.result;
 
-      // Always reset back to 'crop' layout mode as default
-      layoutMode = 'crop';
-      btnModeCrop.classList.add('active');
-      btnModeFit.classList.remove('active');
-      cropperWrapper.classList.remove('hidden');
+      // Default crop if image is squared should be to fit the full image
+      if (img.width === img.height) {
+        layoutMode = 'fit';
+        btnModeCrop.classList.remove('active');
+        btnModeFit.classList.add('active');
+        cropperWrapper.classList.add('hidden');
+      } else {
+        layoutMode = 'crop';
+        btnModeCrop.classList.add('active');
+        btnModeFit.classList.remove('active');
+        cropperWrapper.classList.remove('hidden');
+      }
 
       // Show file selection success state
       dropzonePrompt.classList.add('hidden');
