@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DS banner maker</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-X5X30M3BQG"></script>
   <script>
     window.dataLayer = window.dataLayer || [];
@@ -54,23 +56,30 @@
 
     <!-- Icon -->
     <section class="panel step-card">
-        <h2 class="step-title">Upload image</h2>
-        
-        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload icon image">
-          <input type="file" id="file-input" accept="image/*" tabindex="-1">
+        <h2 class="step-title">Upload image or banner</h2>
+
+        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload icon image or banner.bin file">
+          <input type="file" id="file-input" accept="image/*,.bin" tabindex="-1">
           <div class="dropzone-content">
             <span class="material-symbols-outlined upload-icon">cloud_upload</span>
-            <p id="dropzone-prompt" class="dropzone-text">Click or drop an <strong class="highlight">icon image</strong> here</p>
-            <div class="dropzone-preview-wrapper">
+            <p id="dropzone-prompt" class="dropzone-text">Click or drop an <strong class="highlight">icon image</strong> or <strong class="highlight">banner.bin</strong> here</p>
+            <div id="dropzone-preview-wrapper" class="dropzone-preview-wrapper">
               <canvas id="crop-preview-canvas" width="96" height="96" class="dropzone-preview hidden"></canvas>
               <p id="dropzone-filename" class="dropzone-filename hidden"></p>
             </div>
           </div>
         </div>
 
-        <p class="upload-tip">Tip: Use a pixel art editor to draw your icon at 32 × 32 with a
-        16-color palette. Set your transparent background to a distinct color and this tool
-        will recognize it automatically.</p>
+        <div id="bin-loaded-info" class="bin-loaded-card hidden" role="status">
+          <div id="bin-preview-slot" class="bin-preview-slot"></div>
+          <p id="bin-loaded-text"></p>
+          <button type="button" id="btn-remove-bin" class="remove-btn" aria-label="Remove the imported banner.bin and start fresh">
+            <span class="material-symbols-outlined">close</span>
+            Remove
+          </button>
+        </div>
+
+        <p class="upload-tip">Tip: Upload an image to auto-downscale and quantize it, or an existing <code>banner.bin</code> to extract and edit its icon and metadata. Uploading a new file replaces what's currently loaded.</p>
 
         <div id="error-box" class="message-card error-card hidden" role="alert">
           <p id="error-message"></p>
@@ -109,8 +118,8 @@
 
       <!-- Title -->
       <section class="panel step-card">
-        <h2 class="step-title">Enter title</h2>
-        
+        <h2 class="step-title">Banner options</h2>
+
         <form class="metadata-form" onsubmit="return false;">
           <div class="input-group">
             <div class="label-row">
@@ -134,6 +143,19 @@
               <span class="tooltip-trigger" tabindex="0" data-tip="The creator's name or publishing company displayed on the bottom&nbsp;line." aria-label="Author help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
             </div>
             <input type="text" id="input-author" maxlength="40" placeholder="e.g. Jane Doe" autocomplete="off">
+          </div>
+
+          <div class="input-group">
+            <div class="label-row">
+              <span id="pixel-enhance-label" class="field-label">Pixel enhance</span>
+              <div class="inline-controls">
+                <div class="pill-group" role="group" aria-labelledby="pixel-enhance-label">
+                  <button type="button" id="btn-pixelart-off" class="pill-btn active" aria-label="Disable pixel enhance">Off</button>
+                  <button type="button" id="btn-pixelart-on" class="pill-btn" aria-label="Enable pixel enhance">On</button>
+                </div>
+                <span class="tooltip-trigger" tabindex="0" data-tip="Dithers colors and boosts contrast/saturation so busy photos read closer to hand-drawn pixel art. Best for photos; leave off for already-clean pixel art." aria-label="Pixel enhance help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+              </div>
+            </div>
           </div>
         </form>
       </section>
@@ -183,7 +205,8 @@
 
     <!-- Instructions Footer -->
     <footer class="app-footer">
-      <p>Replace the <code>banner.bin</code> inside your homebrew source and&nbsp;compile.</p>
+      <p>This is your NDS banner data. Follow your homebrew project's build steps, or your flashcart guide's instructions, to put it to&nbsp;use.</p>
+      <p class="footer-credit">Made with <span aria-hidden="true">❤️</span> from Argentina by <a href="https://github.com/tasken" target="_blank" rel="noopener">@tasken</a> &middot; <a href="https://github.com/tasken/banner-maker" target="_blank" rel="noopener">Source on GitHub</a></p>
     </footer>
   </main>
 

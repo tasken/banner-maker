@@ -1,4 +1,4 @@
-import { packBanner, quantize, downscaleBox } from './core.js?v=__COMMIT_HASH__';
+import { packBanner, quantize, downscaleBox, decodeBanner } from './core.js?v=__COMMIT_HASH__';
 
 // DOM elements
 const dropzone = document.getElementById('dropzone');
@@ -17,12 +17,19 @@ const resetBtn = document.getElementById('reset-btn');
 
 // Crop & Layout mode elements
 const cropPreviewCanvas = document.getElementById('crop-preview-canvas');
+const dropzonePreviewWrapper = document.getElementById('dropzone-preview-wrapper');
 const cropControl = document.getElementById('crop-control');
 const cropperWrapper = document.getElementById('cropper-wrapper');
 const cropEditorImg = document.getElementById('crop-editor-img');
 const btnModeCrop = document.getElementById('btn-mode-crop');
 const btnModeFit = document.getElementById('btn-mode-fit');
+const btnPixelArtOff = document.getElementById('btn-pixelart-off');
+const btnPixelArtOn = document.getElementById('btn-pixelart-on');
 const transparencyInfo = document.getElementById('transparency-info');
+const binLoadedInfo = document.getElementById('bin-loaded-info');
+const binPreviewSlot = document.getElementById('bin-preview-slot');
+const binLoadedText = document.getElementById('bin-loaded-text');
+const btnRemoveBin = document.getElementById('btn-remove-bin');
 
 // Mockup elements
 const mockTitle = document.getElementById('mock-title');
@@ -68,6 +75,8 @@ let currentPixels = null; // 1024 RGBA objects
 let cropperInstance = null;
 let layoutMode = 'crop'; // 'crop' or 'fit'
 let loadedImageHasTransparency = false;
+let pixelArtEnhance = false;
+let downloadConfirmTimeout = null;
 
 // Setup Event Listeners
 fileInput.addEventListener('change', handleFileSelect);
@@ -113,6 +122,10 @@ dropzone.addEventListener('drop', (e) => {
 downloadBtn.addEventListener('click', triggerDownload);
 resetBtn.addEventListener('click', resetAll);
 
+// Lets the user discard the imported banner.bin (icon + text) entirely and
+// go back to a blank slate, rather than being forced to pick a replacement.
+btnRemoveBin.addEventListener('click', resetAll);
+
 btnScale1x.addEventListener('click', () => {
   dsIconSlot.classList.remove('scale-2x');
   btnScale1x.classList.add('active');
@@ -144,6 +157,22 @@ btnModeFit.addEventListener('click', () => {
   processImage();
 });
 
+btnPixelArtOff.addEventListener('click', () => {
+  if (!pixelArtEnhance) return;
+  pixelArtEnhance = false;
+  btnPixelArtOff.classList.add('active');
+  btnPixelArtOn.classList.remove('active');
+  if (loadedImage) updateBannerData();
+});
+
+btnPixelArtOn.addEventListener('click', () => {
+  if (pixelArtEnhance) return;
+  pixelArtEnhance = true;
+  btnPixelArtOn.classList.add('active');
+  btnPixelArtOff.classList.remove('active');
+  if (loadedImage) updateBannerData();
+});
+
 function initCropper() {
   destroyCropper();
   if (!loadedImage) return;
@@ -157,6 +186,15 @@ function initCropper() {
     responsive: true,
     zoomable: true,
     ready() {
+      // Cropper.js scales small images up to fill the viewport by default,
+      // which blurs pixel-art icons. Cap the initial zoom at 100% (1 image
+      // pixel = 1 CSS pixel) so nothing gets upscaled; larger images keep
+      // their normal fit-to-container sizing. Users can still zoom in/out
+      // freely with the mouse wheel or pinch either way.
+      const imageData = cropperInstance.getImageData();
+      if (imageData.width > imageData.naturalWidth) {
+        cropperInstance.zoomTo(1);
+      }
       processImage();
     },
     crop() {
@@ -172,8 +210,17 @@ function destroyCropper() {
   }
 }
 
+// Escapes a string for safe interpolation into innerHTML.
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// msg is trusted markup (may contain <code> around exact filenames/values);
+// any interpolated user-provided text must be passed through escapeHtml() first.
 function showError(msg) {
-  errorMessage.textContent = msg;
+  errorMessage.innerHTML = msg;
   errorBox.classList.remove('hidden');
 }
 
@@ -189,6 +236,11 @@ function handleFileSelect() {
   const file = fileInput.files[0];
   if (!file) return;
 
+  if (file.name.toLowerCase().endsWith('.bin')) {
+    handleBinSelect(file);
+    return;
+  }
+
   // Read and load image
   const reader = new FileReader();
   reader.onload = function(event) {
@@ -198,7 +250,7 @@ function handleFileSelect() {
       
       // Sanity check dimensions (use smaller side to prevent lag)
       if (size > 4096) {
-        showError(`This image is too large (${img.width}×${img.height}px). To prevent performance lag, please upload an image where the smaller side is under 4096px.`);
+        showError(`This image is too large (<code>${img.width}×${img.height}px</code>). To prevent performance lag, upload an image where the smaller side is under <code>4096px</code>.`);
         loadedImage = null;
         currentPixels = null;
         downloadBtn.disabled = true;
@@ -254,11 +306,19 @@ function handleFileSelect() {
         cropperWrapper.classList.remove('hidden');
       }
 
-      // Show file selection success state
+      // Show file selection success state. The preview canvas may currently
+      // be sitting inside the "banner loaded" card from a previous .bin
+      // import, so make sure it's back in its home slot in the dropzone.
+      dropzonePreviewWrapper.insertBefore(cropPreviewCanvas, dropzoneFilename);
       dropzonePrompt.classList.add('hidden');
       cropPreviewCanvas.classList.remove('hidden');
       dropzoneFilename.textContent = `✓ ${file.name}`;
       dropzoneFilename.classList.remove('hidden');
+
+      // A plain image was uploaded, so any previous "editing existing
+      // banner.bin" indicator no longer applies.
+      binLoadedInfo.classList.add('hidden');
+      binLoadedText.textContent = '';
 
       // Initialize Cropper.js
       initCropper();
@@ -276,6 +336,121 @@ function handleFileSelect() {
   reader.readAsDataURL(file);
 }
 
+function handleBinSelect(file) {
+  const reader = new FileReader();
+  reader.onload = function(event) {
+    try {
+      const arrayBuffer = event.target.result;
+      const bytes = new Uint8Array(arrayBuffer);
+
+      // Sanity check size
+      if (bytes.length < 2112) {
+        showError("Invalid banner file size. A valid DS <code>banner.bin</code> must be at least <code>2112 bytes</code>.");
+        return;
+      }
+
+      // Check version bytes (0x0001, 0x0002, 0x0003, etc.)
+      const version = bytes[0] | (bytes[1] << 8);
+      if (version === 0 || version > 0x0F00) {
+        showError("Invalid banner file format. Version identifier not recognized.");
+        return;
+      }
+
+      // Parse banner using the core function
+      const parsed = decodeBanner(bytes);
+
+      // Update metadata inputs in the DOM
+      inputTitle.value = parsed.title;
+      inputSubtitle.value = parsed.subtitle;
+      inputAuthor.value = parsed.author;
+      updateMockupText();
+
+      // Convert the parsed pixels back to an Image so we can load it in the editor
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = 32;
+      tempCanvas.height = 32;
+      const tempCtx = tempCanvas.getContext('2d');
+      const imgData = tempCtx.createImageData(32, 32);
+
+      for (let i = 0; i < 1024; i++) {
+        const p = parsed.pixels[i];
+        const idx = i * 4;
+        imgData.data[idx] = p.r;
+        imgData.data[idx + 1] = p.g;
+        imgData.data[idx + 2] = p.b;
+        imgData.data[idx + 3] = p.a;
+      }
+      tempCtx.putImageData(imgData, 0, 0);
+
+      const dataURL = tempCanvas.toDataURL('image/png');
+
+      // Load the image just like standard images
+      const img = new Image();
+      img.onload = function() {
+        loadedImage = img;
+
+        // Transparency check
+        loadedImageHasTransparency = false;
+        for (let i = 0; i < parsed.pixels.length; i++) {
+          if (parsed.pixels[i].a < 255) {
+            loadedImageHasTransparency = true;
+            break;
+          }
+        }
+
+        // Update transparency info panel visibility
+        if (loadedImageHasTransparency) {
+          transparencyInfo.classList.remove('hidden');
+        } else {
+          transparencyInfo.classList.add('hidden');
+        }
+
+        // Destroy previous cropper instance
+        destroyCropper();
+
+        // Show crop control panel
+        cropControl.classList.remove('hidden');
+        cropEditorImg.src = dataURL;
+
+        // Default to 'fit' layout mode since it's already 32x32 px square
+        layoutMode = 'fit';
+        btnModeCrop.classList.remove('active');
+        btnModeFit.classList.add('active');
+        cropperWrapper.classList.add('hidden');
+
+        // Keep the dropzone itself in its default, empty prompt state so
+        // it's obvious the user can still click/drop a different image or
+        // .bin there. The live preview instead moves into the "banner
+        // loaded" card below, along with a Remove action, since only .bin
+        // uploads show this indicator (plain image uploads never do).
+        dropzonePrompt.classList.remove('hidden');
+        dropzoneFilename.classList.add('hidden');
+        dropzoneFilename.textContent = '';
+
+        binPreviewSlot.appendChild(cropPreviewCanvas);
+        cropPreviewCanvas.classList.remove('hidden');
+
+        binLoadedText.innerHTML = `Editing existing <code>banner.bin</code>: icon, title & text imported from "${escapeHtml(file.name)}".`;
+        binLoadedInfo.classList.remove('hidden');
+
+        // Process image to populate currentPixels and trigger updateBannerData
+        processImage();
+      };
+
+      img.onerror = function() {
+        showError("Failed to convert binary banner icon to editable image.");
+      };
+
+      img.src = dataURL;
+
+    } catch (err) {
+      console.error(err);
+      showError("Failed to parse the <code>banner.bin</code> file. Make sure it is a valid Nintendo DS banner.");
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 function clearCanvas() {
   previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
 }
@@ -285,14 +460,20 @@ function updateMockupText() {
   const s = inputSubtitle.value.trim();
   const a = inputAuthor.value.trim();
 
-  mockTitle.textContent = t || "Untitled game";
-  mockSubtitle.textContent = s || "No subtitle";
-  mockAuthor.textContent = a || "No author";
+  const hasAny = Boolean(t || s || a);
 
-  // Toggle placeholder classes for styling if empty
-  mockTitle.classList.toggle('placeholder', !t);
-  mockSubtitle.classList.toggle('placeholder', !s);
-  mockAuthor.classList.toggle('placeholder', !a);
+  // packBanner() omits empty subtitle/author lines entirely rather than
+  // encoding a blank line (core.js), so mirror that here: only render
+  // populated lines and let them re-center in the flex column, matching
+  // how the real DS/DSi system menu displays the title block.
+  mockTitle.textContent = t || (hasAny ? "" : "Untitled game");
+  mockSubtitle.textContent = s;
+  mockAuthor.textContent = a;
+
+  mockTitle.classList.toggle('hidden', !t && hasAny);
+  mockTitle.classList.toggle('mock-placeholder', !t && !hasAny);
+  mockSubtitle.classList.toggle('hidden', !s);
+  mockAuthor.classList.toggle('hidden', !a);
 }
 
 function processImage() {
@@ -301,6 +482,9 @@ function processImage() {
   const width = loadedImage.width;
   const height = loadedImage.height;
   const pCtx = cropPreviewCanvas.getContext('2d');
+  pCtx.imageSmoothingEnabled = false;
+  pCtx.mozImageSmoothingEnabled = false;
+  pCtx.webkitImageSmoothingEnabled = false;
 
   if (layoutMode === 'crop') {
     // Get cropping coordinates from Cropper.js
@@ -320,6 +504,9 @@ function processImage() {
     srcCanvas.width = cropW;
     srcCanvas.height = cropH;
     const srcCtx = srcCanvas.getContext('2d');
+    srcCtx.imageSmoothingEnabled = false;
+    srcCtx.mozImageSmoothingEnabled = false;
+    srcCtx.webkitImageSmoothingEnabled = false;
     srcCtx.drawImage(loadedImage, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
 
     const srcImgData = srcCtx.getImageData(0, 0, cropW, cropH);
@@ -338,6 +525,9 @@ function processImage() {
     srcCanvas.width = size;
     srcCanvas.height = size;
     const srcCtx = srcCanvas.getContext('2d');
+    srcCtx.imageSmoothingEnabled = false;
+    srcCtx.mozImageSmoothingEnabled = false;
+    srcCtx.webkitImageSmoothingEnabled = false;
     srcCtx.clearRect(0, 0, size, size);
 
     let scaleW, scaleH, destX, destY;
@@ -373,7 +563,7 @@ function updateBannerData() {
   if (!currentPixels) return;
 
   // Perform quantization
-  const { palette, indices } = quantize(currentPixels, 15);
+  const { palette, indices } = quantize(currentPixels, 15, pixelArtEnhance);
 
   // Render quantized live preview
   renderPreview(palette, indices);
@@ -382,8 +572,8 @@ function updateBannerData() {
   const title = inputTitle.value;
   const subtitle = inputSubtitle.value;
   const author = inputAuthor.value;
-  
-  const bannerBin = packBanner(currentPixels, title, subtitle, author);
+
+  const bannerBin = packBanner(currentPixels, title, subtitle, author, pixelArtEnhance);
 
   // Enable download
   downloadBtn.disabled = false;
@@ -434,7 +624,7 @@ function triggerDownload() {
   const subtitle = inputSubtitle.value;
   const author = inputAuthor.value;
 
-  const bannerBin = packBanner(currentPixels, title, subtitle, author);
+  const bannerBin = packBanner(currentPixels, title, subtitle, author, pixelArtEnhance);
   const blob = new Blob([bannerBin], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   
@@ -447,6 +637,20 @@ function triggerDownload() {
   // Cleanup
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+
+  // Browsers don't reliably surface a visible signal that a download
+  // succeeded, and this button is a documented step in external guides
+  // (e.g. flashcart-guides' banner tutorial), so give a brief on-page
+  // confirmation before reverting back to the normal label.
+  clearTimeout(downloadConfirmTimeout);
+  const originalLabel = downloadBtn.dataset.originalLabel || downloadBtn.textContent;
+  downloadBtn.dataset.originalLabel = originalLabel;
+  downloadBtn.textContent = 'Downloaded ✓';
+  downloadBtn.classList.add('success');
+  downloadConfirmTimeout = setTimeout(() => {
+    downloadBtn.textContent = originalLabel;
+    downloadBtn.classList.remove('success');
+  }, 1800);
 }
 
 function resetAll() {
@@ -467,19 +671,31 @@ function resetAll() {
   dsIconSlot.classList.remove('scale-2x');
   btnScale1x.classList.add('active');
   btnScale2x.classList.remove('active');
+
+  // Reset pixel enhance toggle to off
+  pixelArtEnhance = false;
+  btnPixelArtOff.classList.add('active');
+  btnPixelArtOn.classList.remove('active');
 }
 
 function resetDropzonePrompt() {
   dropzonePrompt.classList.remove('hidden');
+  // Return the preview canvas to its home slot in the dropzone, in case a
+  // .bin import had moved it into the "banner loaded" card.
+  dropzonePreviewWrapper.insertBefore(cropPreviewCanvas, dropzoneFilename);
   cropPreviewCanvas.classList.add('hidden');
   cropControl.classList.add('hidden');
   dropzoneFilename.classList.add('hidden');
   dropzoneFilename.textContent = '';
-  
+
   // Hide transparency info card
   loadedImageHasTransparency = false;
   transparencyInfo.classList.add('hidden');
-  
+
+  // Hide "editing existing banner.bin" indicator
+  binLoadedInfo.classList.add('hidden');
+  binLoadedText.textContent = '';
+
   // Clear the preview canvas
   const pCtx = cropPreviewCanvas.getContext('2d');
   pCtx.clearRect(0, 0, 96, 96);
