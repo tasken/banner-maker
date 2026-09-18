@@ -144,14 +144,12 @@ function boostPixelArtColor(r, g, b) {
   };
 }
 
-// 4x4 ordered (Bayer) dither matrix, values 0..15.
-const BAYER_4X4 = [
-  [0, 8, 2, 10],
-  [12, 4, 14, 6],
-  [3, 11, 1, 9],
-  [15, 7, 13, 5]
-];
-const DITHER_STRENGTH = 24; // Max +/- offset applied per channel before nearest-color lookup
+// Floyd-Steinberg error diffusion: [dx, dy, share] for the pixel ahead and
+// the three below. dx is mirrored on right-to-left rows.
+const ERROR_DIFFUSION = [[1, 0, 7 / 16], [-1, 1, 3 / 16], [0, 1, 5 / 16], [1, 1, 1 / 16]];
+// Diffuse 80% of each pixel's error, which keeps flat areas calm and stops
+// error from streaking across the icon.
+const DITHER_DAMPING = 0.8;
 
 // Index 0 is transparent (its color is never shown), then the given colors,
 // then black for unused entries: always 16 colors.
@@ -340,11 +338,11 @@ function snapDistinct(centers, colors) {
  * Images with at most maxColors RGB555 colors keep them exactly. Otherwise a
  * pixel-weighted median cut over the unique colors seeds maxColors centers,
  * k-means refines them, and every opaque pixel maps to the nearest palette
- * color by perceptual distance (after ordered dithering when enhanced).
+ * color by perceptual distance (with Floyd-Steinberg dithering when enhanced).
  *
  * @param {Array<{r: number, g: number, b: number, a: number}>} pixels - 1024 pixels
  * @param {number} [maxColors=15]
- * @param {boolean} [enhance=false] - Boosts contrast/saturation and applies ordered dithering.
+ * @param {boolean} [enhance=false] - Boosts contrast/saturation and applies error-diffusion dithering.
  * @returns {{palette: Array<{r: number, g: number, b: number}>, indices: Uint8Array}}
  */
 export function quantize(pixels, maxColors = 15, enhance = false) {
@@ -401,21 +399,52 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
   const palette = buildPalette(paletteColors);
 
   // Map every opaque pixel to its nearest palette color
-  for (const p of opaquePixels) {
-    let searchR = p.r, searchG = p.g, searchB = p.b;
-    if (enhance) {
-      const x = p.originalIndex % 32;
-      const y = (p.originalIndex / 32) | 0;
-      const threshold = (BAYER_4X4[y & 3][x & 3] / 16 - 0.5) * DITHER_STRENGTH;
-      searchR = clamp255(p.r + threshold);
-      searchG = clamp255(p.g + threshold);
-      searchB = clamp255(p.b + threshold);
+  if (enhance) {
+    diffuseErrors(opaquePixels, paletteColors, indices);
+  } else {
+    for (const p of opaquePixels) {
+      indices[p.originalIndex] = 1 + nearestIndex(p, paletteColors);
     }
-
-    indices[p.originalIndex] = 1 + nearestIndex({ r: searchR, g: searchG, b: searchB }, paletteColors);
   }
 
   return { palette, indices };
+}
+
+// Serpentine Floyd-Steinberg dithering: maps each opaque pixel to its nearest
+// palette color after adding the error its already-mapped neighbors passed
+// on. Transparent pixels neither take nor pass on error.
+function diffuseErrors(opaquePixels, paletteColors, indices) {
+  const pixelAt = new Array(1024).fill(null);
+  for (const p of opaquePixels) pixelAt[p.originalIndex] = p;
+  const error = new Float64Array(1024 * 3);
+
+  for (let y = 0; y < 32; y++) {
+    const dir = y % 2 === 0 ? 1 : -1;
+    for (let step = 0; step < 32; step++) {
+      const x = dir === 1 ? step : 31 - step;
+      const i = y * 32 + x;
+      const p = pixelAt[i];
+      if (!p) continue;
+
+      const want = { r: p.r + error[i * 3], g: p.g + error[i * 3 + 1], b: p.b + error[i * 3 + 2] };
+      const k = nearestIndex(want, paletteColors);
+      indices[i] = k + 1;
+
+      const errR = (want.r - paletteColors[k].r) * DITHER_DAMPING;
+      const errG = (want.g - paletteColors[k].g) * DITHER_DAMPING;
+      const errB = (want.b - paletteColors[k].b) * DITHER_DAMPING;
+      for (const [dx, dy, share] of ERROR_DIFFUSION) {
+        const nx = x + dx * dir;
+        const ny = y + dy;
+        if (nx < 0 || nx > 31 || ny > 31) continue;
+        const j = ny * 32 + nx;
+        if (!pixelAt[j]) continue;
+        error[j * 3] += errR * share;
+        error[j * 3 + 1] += errG * share;
+        error[j * 3 + 2] += errB * share;
+      }
+    }
+  }
 }
 
 // TILED_PIXEL[i] is the 32x32 pixel index held in the low nibble of tiled
