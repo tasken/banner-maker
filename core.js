@@ -549,6 +549,92 @@ export function indicesToRgba(palette, indices) {
 }
 
 /**
+ * Reads a PNG that is already a DS icon: 32x32, indexed color, at most 16
+ * palette entries. This is what the flashcart guide's GIMP steps produce,
+ * where the color moved to palette entry 0 is meant to be transparent.
+ * Browsers never expose a PNG's palette to canvas code, so the file is parsed
+ * here. Every pixel keeps its palette index, and entry 0 becomes transparent.
+ *
+ * @param {Uint8Array} bytes - The PNG file
+ * @returns {Promise<{palette: Array<{r: number, g: number, b: number}>, indices: Uint8Array} | null>}
+ *   16 RGB555-snapped palette colors and 1024 indices, or null when the file
+ *   is not such a PNG, is interlaced, or marks an entry other than 0 as
+ *   transparent (that image is better served by the normal RGBA path).
+ */
+export async function decodeIndexedIcon(bytes) {
+  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+  if (bytes.length < 8 || signature.some((b, i) => bytes[i] !== b)) return null;
+
+  try {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let header = null;
+    let plte = null;
+    let trns = null;
+    const idat = [];
+    for (let o = 8; o + 12 <= bytes.length; ) {
+      const length = view.getUint32(o);
+      const type = String.fromCharCode(...bytes.subarray(o + 4, o + 8));
+      const data = bytes.subarray(o + 8, o + 8 + length);
+      if (type === 'IHDR') header = { width: view.getUint32(o + 8), height: view.getUint32(o + 12), bitDepth: data[8], colorType: data[9], interlace: data[12] };
+      else if (type === 'PLTE') plte = data;
+      else if (type === 'tRNS') trns = data;
+      else if (type === 'IDAT') idat.push(data);
+      else if (type === 'IEND') break;
+      o += 12 + length;
+    }
+    if (!header || !plte || header.colorType !== 3 || header.interlace !== 0) return null;
+    if (header.width !== 32 || header.height !== 32) return null;
+    const entries = plte.length / 3;
+    if (entries > 16 || (trns && trns.some((a, i) => i > 0 && a < 255))) return null;
+
+    // IDAT is a zlib stream
+    const inflated = new Blob(idat).stream().pipeThrough(new DecompressionStream('deflate'));
+    const raw = new Uint8Array(await new Response(inflated).arrayBuffer());
+
+    // Undo the per-row filters (1 byte per filter unit at these bit depths)
+    const { bitDepth } = header;
+    const rowBytes = Math.ceil(32 * bitDepth / 8);
+    if (raw.length < 32 * (rowBytes + 1)) return null;
+    const indices = new Uint8Array(1024);
+    let prev = new Uint8Array(rowBytes);
+    for (let y = 0; y < 32; y++) {
+      const filter = raw[y * (rowBytes + 1)];
+      if (filter > 4) return null;
+      const row = raw.slice(y * (rowBytes + 1) + 1, (y + 1) * (rowBytes + 1));
+      for (let i = 0; i < rowBytes; i++) {
+        const left = i > 0 ? row[i - 1] : 0;
+        const up = prev[i];
+        const upLeft = i > 0 ? prev[i - 1] : 0;
+        if (filter === 1) row[i] += left;
+        else if (filter === 2) row[i] += up;
+        else if (filter === 3) row[i] += (left + up) >> 1;
+        else if (filter === 4) {
+          const p = left + up - upLeft;
+          const pa = Math.abs(p - left), pb = Math.abs(p - up), pc = Math.abs(p - upLeft);
+          row[i] += pa <= pb && pa <= pc ? left : pb <= pc ? up : upLeft;
+        }
+      }
+      for (let x = 0; x < 32; x++) {
+        const bit = x * bitDepth;
+        const index = (row[bit >> 3] >> (8 - bitDepth - (bit & 7))) & ((1 << bitDepth) - 1);
+        if (index >= entries) return null;
+        indices[y * 32 + x] = index;
+      }
+      prev = row;
+    }
+
+    const palette = [];
+    for (let k = 0; k < 16; k++) {
+      const s = k < entries ? snapToRgb555(plte[k * 3], plte[k * 3 + 1], plte[k * 3 + 2]) : { r: 0, g: 0, b: 0 };
+      palette.push({ r: s.r, g: s.g, b: s.b });
+    }
+    return { palette, indices };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Assembles a complete NTR v1 banner.bin structure (2112 bytes / 0x840).
  * Replicates the Title, Subtitle, and Author metadata across all 6 system menu language slots.
  *
@@ -560,11 +646,26 @@ export function indicesToRgba(palette, indices) {
  * @returns {Uint8Array} The packed 2112-byte banner.bin
  */
 export function packBanner(pixels, title, subtitle, author, enhance = false) {
+  // Icon: 15 colors plus transparent index 0
+  return packBannerIcon(quantize(pixels, 15, enhance), title, subtitle, author);
+}
+
+/**
+ * Assembles an NTR v1 banner.bin from an icon that already has its palette,
+ * such as one from quantize() or decodeIndexedIcon().
+ *
+ * @param {{palette: Array<{r: number, g: number, b: number}>, indices: Uint8Array}} icon
+ *   16 palette colors (index 0 is transparent) and 1024 pixel indices
+ * @param {string} title
+ * @param {string} subtitle
+ * @param {string} author
+ * @returns {Uint8Array} The packed 2112-byte banner.bin
+ */
+export function packBannerIcon(icon, title, subtitle, author) {
   const banner = new Uint8Array(NTR_V1_SIZE);
   writeU16(banner, 0x00, 0x0001); // Version: NTR v1
 
-  // Icon: 15 colors plus transparent index 0
-  const { palette, indices } = quantize(pixels, 15, enhance);
+  const { palette, indices } = icon;
   banner.set(tileEncode(indices), ICON_BITMAP);
   banner.set(paletteToRgb555(palette), ICON_PALETTE);
 

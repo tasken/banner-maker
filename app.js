@@ -1,4 +1,4 @@
-import { packBanner, quantize, createImageSource, downscaleRegion, decodeBanner, getBannerFormat, indicesToRgba, pixelsToRgba } from './core.js?v=__COMMIT_HASH__';
+import { packBannerIcon, quantize, createImageSource, downscaleRegion, decodeBanner, decodeIndexedIcon, getBannerFormat, indicesToRgba, pixelsToRgba } from './core.js?v=__COMMIT_HASH__';
 
 // DOM elements
 const dropzone = document.getElementById('dropzone');
@@ -30,6 +30,7 @@ const binLoadedInfo = document.getElementById('bin-loaded-info');
 const binPreviewSlot = document.getElementById('bin-preview-slot');
 const binLoadedText = document.getElementById('bin-loaded-text');
 const btnRemoveBin = document.getElementById('btn-remove-bin');
+const paletteNote = document.getElementById('palette-note');
 
 // Mockup elements
 const mockTitle = document.getElementById('mock-title');
@@ -81,6 +82,7 @@ let imageSource = null; // createImageSource() pyramid of loadedImage's pixels
 let imageSourceScale = 1; // imageSource pixels per loadedImage pixel
 let processImageFrame = 0;
 let currentPixels = null; // 1024 RGBA objects
+let indexedIcon = null; // decodeIndexedIcon() result when the upload is already a DS icon
 let cropperInstance = null;
 let layoutMode = 'crop'; // 'crop' or 'fit'
 let pixelArtEnhance = false;
@@ -299,8 +301,10 @@ function hasTransparentPixel(rgba) {
 
 // Makes img the icon source for crop/fit. rgba is its pixel copy
 // (width x height, possibly smaller than img); src loads the Cropper editor.
-function setLoadedImage(img, src, rgba, width, height) {
+// icon is set when the upload is already a DS icon (see decodeIndexedIcon).
+function setLoadedImage(img, src, rgba, width, height, icon = null) {
   loadedImage = img;
+  indexedIcon = icon;
   imageSource = createImageSource(rgba, width, height);
   imageSourceScale = width / img.width;
   transparencyInfo.classList.toggle('hidden', !hasTransparentPixel(rgba));
@@ -312,6 +316,8 @@ function setLoadedImage(img, src, rgba, width, height) {
 
 function unloadImage() {
   loadedImage = null;
+  indexedIcon = null;
+  paletteNote.classList.add('hidden');
   imageSource = null;
   currentPixels = null;
   downloadBtn.disabled = true;
@@ -331,11 +337,12 @@ function handleFileSelect() {
 
   // Read and load image
   const reader = new FileReader();
-  reader.onload = function(event) {
+  reader.onload = async function(event) {
+    const icon = file.type === 'image/png' ? await decodeIndexedIcon(new Uint8Array(await file.arrayBuffer())) : null;
     const img = new Image();
     img.onload = function() {
       const { rgba, width, height } = readImagePixels(img);
-      setLoadedImage(img, event.target.result, rgba, width, height);
+      setLoadedImage(img, event.target.result, rgba, width, height, icon);
 
       // A square image fits as-is; anything else starts in crop mode
       setLayoutMode(img.width === img.height ? 'fit' : 'crop');
@@ -500,11 +507,22 @@ function processImage() {
   updateBannerData();
 }
 
+// A ready-made DS icon keeps its own palette, but only when used whole and
+// unenhanced; cropping or pixel enhance needs a new palette.
+function usesIndexedIcon() {
+  return Boolean(indexedIcon) && layoutMode === 'fit' && !pixelArtEnhance;
+}
+
+function currentIcon() {
+  return usesIndexedIcon() ? indexedIcon : quantize(currentPixels, 15, pixelArtEnhance);
+}
+
 function updateBannerData() {
   if (!currentPixels) return;
 
-  const { palette, indices } = quantize(currentPixels, 15, pixelArtEnhance);
+  const { palette, indices } = currentIcon();
   renderPreview(palette, indices);
+  paletteNote.classList.toggle('hidden', !usesIndexedIcon());
   downloadBtn.disabled = false;
 }
 
@@ -533,7 +551,7 @@ function saveFile(bytes, filename) {
 function triggerDownload() {
   if (!currentPixels) return;
 
-  saveFile(packBanner(currentPixels, inputTitle.value, inputSubtitle.value, inputAuthor.value, pixelArtEnhance), 'banner.bin');
+  saveFile(packBannerIcon(currentIcon(), inputTitle.value, inputSubtitle.value, inputAuthor.value), 'banner.bin');
 
   // Browsers don't reliably surface a visible signal that a download
   // succeeded, and this button is a documented step in external guides
