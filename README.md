@@ -8,7 +8,7 @@ A simple web tool to create custom icons and metadata banners (`banner.bin`) for
 
 1. Drop an **icon image** onto the upload area, or drop an existing `banner.bin` file to re-edit its icon and text.
    - Images are automatically resized to 32×32 and reduced to 16 colors.
-   - `.bin` files pre-fill the Title/Subtitle/Author fields and the icon straight from the file.
+   - `.bin` files pre-fill the Title/Subtitle/Author fields and the icon straight from the file. Any version works (NTR v1–v3 and DSi animated), but downloads are always static NTR v1 banners, so Chinese/Korean titles and DSi icon animations aren't kept.
 2. Pick a layout mode: `Crop` to crop the image 1:1, or `Fit` to scale the whole image with padding.
 3. Optionally turn on `Pixel enhance` to dither colors and boost contrast/saturation, so busy photos quantize down closer to hand-drawn pixel art instead of a muddy blur.
 4. Fill in the **Game title**, and optionally a **Subtitle** and **Author**.
@@ -24,11 +24,11 @@ A simple web tool to create custom icons and metadata banners (`banner.bin`) for
 
 - **Crop & Fit support**: Crop your image 1:1 visually or scale it to fit.
 - **Edit existing banners**: Upload an existing `banner.bin` to re-edit its icon, title, subtitle, and author.
-- **Integrity validation**: Inspects and validates CRC16 checksums upon importing existing banner files.
-- **Hardware-accurate quantization**: Snaps colors to Nintendo DS native 15-bit RGB555 color space with perceptual distance weighting and accurate `(v << 3) | (v >> 2)` bit expansion.
+- **Integrity validation**: Checks the banner version and every CRC16 checksum the DS/DSi menu verifies (v1, v2, v3 and the DSi animation CRC) when importing an existing banner, and warns about anything a re-export won't keep.
+- **Native-palette quantization**: Snaps colors to the Nintendo DS 15-bit RGB555 color space with perceptual distance weighting, and previews them with standard `(v << 3) | (v >> 2)` bit expansion.
 - **Halo-free downscaling**: Box filter weights color by alpha to prevent white outline fringe artifacts.
 - **Pixel enhance**: Optional dithering plus contrast/saturation boost so photos quantize closer to genuine pixel art.
-- **Transparency**: Fully preserves transparent backgrounds (renders as hardware transparency on-console) and blends semi-transparent edges against white to prevent halos.
+- **Transparency**: Preserves transparent backgrounds (rendered as hardware transparency on-console). Pixels under 50% opacity become transparent; the rest become solid in their own color, never mixed with a background, so edges don't get halos.
 - **Checksums**: Automatically calculates and embeds valid CRC16 checks.
 - **No dependencies**: Built entirely using standard HTML, CSS, and vanilla JavaScript (aside from Cropper.js via CDN).
 

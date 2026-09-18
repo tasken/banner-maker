@@ -1,4 +1,4 @@
-import { packBanner, quantize, downscaleBox, decodeBanner } from './core.js?v=__COMMIT_HASH__';
+import { packBanner, quantize, createImageSource, downscaleRegion, decodeBanner, getBannerFormat, indicesToRgba, pixelsToRgba } from './core.js?v=__COMMIT_HASH__';
 
 // DOM elements
 const dropzone = document.getElementById('dropzone');
@@ -66,17 +66,30 @@ btnThemeLight.addEventListener('click', () => applyTheme('light'));
 btnThemeSystem.addEventListener('click', () => applyTheme('system'));
 btnThemeDark.addEventListener('click', () => applyTheme('dark'));
 
+// Both previews scale 32x32 pixel art up, so keep pixels crisp. The canvases
+// are never resized, so this setting sticks.
 const resizeCtx = resizeCanvas.getContext('2d');
 const previewCtx = previewCanvas.getContext('2d');
+const cropPreviewCtx = cropPreviewCanvas.getContext('2d');
+previewCtx.imageSmoothingEnabled = false;
+cropPreviewCtx.imageSmoothingEnabled = false;
+const CROP_PREVIEW_SIZE = 96;
 
 // State
 let loadedImage = null;
+let imageSource = null; // createImageSource() pyramid of loadedImage's pixels
+let imageSourceScale = 1; // imageSource pixels per loadedImage pixel
+let processImageFrame = 0;
 let currentPixels = null; // 1024 RGBA objects
 let cropperInstance = null;
 let layoutMode = 'crop'; // 'crop' or 'fit'
-let loadedImageHasTransparency = false;
 let pixelArtEnhance = false;
 let downloadConfirmTimeout = null;
+
+// Longest side of the pixel copy the icon is sampled from. Keeps the canvas
+// under iOS Safari's 16,777,216 px limit (4096 x 4096). A 32x32 icon never
+// needs more: even a 1/128-wide crop still covers 32 source pixels.
+const MAX_SOURCE_SIDE = 4096;
 
 // Setup Event Listeners
 fileInput.addEventListener('change', handleFileSelect);
@@ -109,7 +122,7 @@ dropzone.addEventListener('drop', (e) => {
   }
 });
 
-// Update preview/CRC live when text changes
+// Update preview live when text changes
 [inputTitle, inputSubtitle, inputAuthor].forEach(input => {
   input.addEventListener('input', () => {
     updateMockupText();
@@ -126,57 +139,57 @@ resetBtn.addEventListener('click', resetAll);
 // go back to a blank slate, rather than being forced to pick a replacement.
 btnRemoveBin.addEventListener('click', resetAll);
 
-btnScale1x.addEventListener('click', () => {
-  dsIconSlot.classList.remove('scale-2x');
-  btnScale1x.classList.add('active');
-  btnScale2x.classList.remove('active');
-});
-
-btnScale2x.addEventListener('click', () => {
-  dsIconSlot.classList.add('scale-2x');
-  btnScale2x.classList.add('active');
-  btnScale1x.classList.remove('active');
-});
+btnScale1x.addEventListener('click', () => setPreviewScale2x(false));
+btnScale2x.addEventListener('click', () => setPreviewScale2x(true));
 
 btnModeCrop.addEventListener('click', () => {
   if (layoutMode === 'crop') return;
-  layoutMode = 'crop';
-  btnModeCrop.classList.add('active');
-  btnModeFit.classList.remove('active');
-  cropperWrapper.classList.remove('hidden');
+  setLayoutMode('crop');
   initCropper();
 });
 
 btnModeFit.addEventListener('click', () => {
   if (layoutMode === 'fit') return;
-  layoutMode = 'fit';
-  btnModeFit.classList.add('active');
-  btnModeCrop.classList.remove('active');
-  cropperWrapper.classList.add('hidden');
+  setLayoutMode('fit');
   destroyCropper();
   processImage();
 });
 
-btnPixelArtOff.addEventListener('click', () => {
-  if (!pixelArtEnhance) return;
-  pixelArtEnhance = false;
-  btnPixelArtOff.classList.add('active');
-  btnPixelArtOn.classList.remove('active');
-  if (loadedImage) updateBannerData();
+[[btnPixelArtOff, false], [btnPixelArtOn, true]].forEach(([button, enhance]) => {
+  button.addEventListener('click', () => {
+    if (pixelArtEnhance === enhance) return;
+    setPixelArtEnhance(enhance);
+    if (loadedImage) updateBannerData();
+  });
 });
 
-btnPixelArtOn.addEventListener('click', () => {
-  if (pixelArtEnhance) return;
-  pixelArtEnhance = true;
-  btnPixelArtOn.classList.add('active');
-  btnPixelArtOff.classList.remove('active');
-  if (loadedImage) updateBannerData();
-});
+// Segmented controls: exactly one button is active.
+function setActiveButton(active, inactive) {
+  active.classList.add('active');
+  inactive.classList.remove('active');
+}
+
+function setPreviewScale2x(enabled) {
+  dsIconSlot.classList.toggle('scale-2x', enabled);
+  setActiveButton(enabled ? btnScale2x : btnScale1x, enabled ? btnScale1x : btnScale2x);
+}
+
+function setLayoutMode(mode) {
+  layoutMode = mode;
+  const crop = mode === 'crop';
+  setActiveButton(crop ? btnModeCrop : btnModeFit, crop ? btnModeFit : btnModeCrop);
+  cropperWrapper.classList.toggle('hidden', !crop);
+}
+
+function setPixelArtEnhance(enabled) {
+  pixelArtEnhance = enabled;
+  setActiveButton(enabled ? btnPixelArtOn : btnPixelArtOff, enabled ? btnPixelArtOff : btnPixelArtOn);
+}
 
 function initCropper() {
   destroyCropper();
   if (!loadedImage) return;
-  
+
   cropperInstance = new Cropper(cropEditorImg, {
     aspectRatio: 1,
     viewMode: 1,
@@ -198,7 +211,8 @@ function initCropper() {
       processImage();
     },
     crop() {
-      processImage();
+      // Cropper fires this on every pointer move; sample at most once per frame.
+      scheduleProcessImage();
     }
   });
 }
@@ -229,7 +243,81 @@ function clearError() {
   errorBox.classList.add('hidden');
 }
 
-// Warning logic removed for simple UI
+function formatHex(value) {
+  return `0x${value.toString(16).toUpperCase().padStart(4, '0')}`;
+}
+
+function formatCount(value) {
+  return value.toLocaleString('en-US');
+}
+
+// The DSi menu hides a banner (no icon, no title) when any CRC fails.
+function crcBadgeHtml(crcChecks) {
+  const failed = crcChecks.filter(c => !c.valid);
+  if (failed.length === 0) {
+    const values = crcChecks.map(c => `${c.name} ${formatHex(c.calculated)}`).join(', ');
+    return `<span class="crc-badge valid" title="All checksums match (${values})">CRC OK</span>`;
+  }
+  const details = failed.map(c => `${c.name}: stored ${formatHex(c.embedded)}, expected ${formatHex(c.calculated)}`).join('; ');
+  return `<span class="crc-badge warning" title="${details}. The DSi menu hides banners with a wrong checksum. Downloading writes a correct one.">CRC mismatch (fixed on export)</span>`;
+}
+
+// Downloads are always static NTR v1 banners, so name what won't carry over.
+function exportLossHtml(lostOnExport) {
+  const lost = [];
+  if (lostOnExport.translations) lost.push('the separate title for each language (one title is used for all)');
+  if (lostOnExport.chineseKorean) lost.push('the Chinese and Korean titles');
+  if (lostOnExport.animation) lost.push('the icon animation');
+  if (lost.length === 0) return '';
+  const list = lost.length === 1 ? lost[0] : `${lost.slice(0, -1).join(', ')} and ${lost[lost.length - 1]}`;
+  return `<br>Downloads as a static NTR v1 banner, so ${list} won't be kept.`;
+}
+
+function createCanvas(width, height) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+}
+
+// Reads img's pixels once, downsized to MAX_SOURCE_SIDE on the longest side.
+function readImagePixels(img) {
+  const scale = Math.min(1, MAX_SOURCE_SIDE / Math.max(img.width, img.height));
+  const canvas = createCanvas(Math.max(1, Math.round(img.width * scale)), Math.max(1, Math.round(img.height * scale)));
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return { rgba: ctx.getImageData(0, 0, canvas.width, canvas.height).data, width: canvas.width, height: canvas.height };
+}
+
+function hasTransparentPixel(rgba) {
+  for (let i = 3; i < rgba.length; i += 4) {
+    if (rgba[i] < 255) return true;
+  }
+  return false;
+}
+
+// Makes img the icon source for crop/fit. rgba is its pixel copy
+// (width x height, possibly smaller than img); src loads the Cropper editor.
+function setLoadedImage(img, src, rgba, width, height) {
+  loadedImage = img;
+  imageSource = createImageSource(rgba, width, height);
+  imageSourceScale = width / img.width;
+  transparencyInfo.classList.toggle('hidden', !hasTransparentPixel(rgba));
+
+  destroyCropper();
+  cropControl.classList.remove('hidden');
+  cropEditorImg.src = src;
+}
+
+function unloadImage() {
+  loadedImage = null;
+  imageSource = null;
+  currentPixels = null;
+  downloadBtn.disabled = true;
+  clearCanvas();
+  resetDropzonePrompt();
+}
 
 function handleFileSelect() {
   clearError();
@@ -246,65 +334,11 @@ function handleFileSelect() {
   reader.onload = function(event) {
     const img = new Image();
     img.onload = function() {
-      const size = Math.min(img.width, img.height);
-      
-      // Sanity check dimensions (use smaller side to prevent lag)
-      if (size > 4096) {
-        showError(`This image is too large (<code>${img.width}×${img.height}px</code>). To prevent performance lag, upload an image where the smaller side is under <code>4096px</code>.`);
-        loadedImage = null;
-        currentPixels = null;
-        downloadBtn.disabled = true;
-        clearCanvas();
-        resetDropzonePrompt();
-        return;
-      }
+      const { rgba, width, height } = readImagePixels(img);
+      setLoadedImage(img, event.target.result, rgba, width, height);
 
-      loadedImage = img;
-
-      // Create a temporary off-screen canvas to check for transparency
-      const scanCanvas = document.createElement('canvas');
-      scanCanvas.width = img.width;
-      scanCanvas.height = img.height;
-      const scanCtx = scanCanvas.getContext('2d');
-      scanCtx.drawImage(img, 0, 0);
-      const scanData = scanCtx.getImageData(0, 0, img.width, img.height).data;
-      
-      loadedImageHasTransparency = false;
-      for (let i = 3; i < scanData.length; i += 4) {
-        if (scanData[i] < 255) {
-          loadedImageHasTransparency = true;
-          break;
-        }
-      }
-      
-      // Update info card visibility
-      if (loadedImageHasTransparency) {
-        transparencyInfo.classList.remove('hidden');
-      } else {
-        transparencyInfo.classList.add('hidden');
-      }
-      
-      // Destroy previous cropper instance
-      destroyCropper();
-
-      // Show crop control panel
-      cropControl.classList.remove('hidden');
-
-      // Set image source for the Cropper editor
-      cropEditorImg.src = event.target.result;
-
-      // Default crop if image is squared should be to fit the full image
-      if (img.width === img.height) {
-        layoutMode = 'fit';
-        btnModeCrop.classList.remove('active');
-        btnModeFit.classList.add('active');
-        cropperWrapper.classList.add('hidden');
-      } else {
-        layoutMode = 'crop';
-        btnModeCrop.classList.add('active');
-        btnModeFit.classList.remove('active');
-        cropperWrapper.classList.remove('hidden');
-      }
+      // A square image fits as-is; anything else starts in crop mode
+      setLayoutMode(img.width === img.height ? 'fit' : 'crop');
 
       // Show file selection success state. The preview canvas may currently
       // be sitting inside the "banner loaded" card from a previous .bin
@@ -320,16 +354,11 @@ function handleFileSelect() {
       binLoadedInfo.classList.add('hidden');
       binLoadedText.textContent = '';
 
-      // Initialize Cropper.js
       initCropper();
     };
     img.onerror = function() {
       showError("Failed to open the image. Please verify it is a valid PNG, JPG, or WebP graphic.");
-      loadedImage = null;
-      currentPixels = null;
-      downloadBtn.disabled = true;
-      clearCanvas();
-      resetDropzonePrompt();
+      unloadImage();
     };
     img.src = event.target.result;
   };
@@ -340,83 +369,37 @@ function handleBinSelect(file) {
   const reader = new FileReader();
   reader.onload = function(event) {
     try {
-      const arrayBuffer = event.target.result;
-      const bytes = new Uint8Array(arrayBuffer);
+      const bytes = new Uint8Array(event.target.result);
 
-      // Sanity check size
-      if (bytes.length < 2112) {
-        showError("Invalid banner file size. A valid DS <code>banner.bin</code> must be at least <code>2112 bytes</code>.");
+      const format = getBannerFormat(bytes);
+      if (!format) {
+        const version = bytes.length >= 2 ? bytes[0] | (bytes[1] << 8) : 0;
+        showError(`This file isn't a DS banner. Its version is <code>${formatHex(version)}</code>, but DS/DSi banners use <code>0x0001</code>, <code>0x0002</code>, <code>0x0003</code> or <code>0x0103</code>. Upload the <code>banner.bin</code> from a DS or DSi project.`);
+        return;
+      }
+      if (bytes.length < format.size) {
+        showError(`This <code>banner.bin</code> is incomplete. ${format.name} banners are <code>${formatCount(format.size)} bytes</code>, but this file has <code>${formatCount(bytes.length)}</code>. Export it again from its source, or upload a different file.`);
         return;
       }
 
-      // Check version bytes (0x0001, 0x0002, 0x0003, etc.)
-      const version = bytes[0] | (bytes[1] << 8);
-      if (version === 0 || version > 0x0F00) {
-        showError("Invalid banner file format. Version identifier not recognized.");
-        return;
-      }
-
-      // Parse banner using the core function
       const parsed = decodeBanner(bytes);
-
-      // Update metadata inputs in the DOM
       inputTitle.value = parsed.title;
       inputSubtitle.value = parsed.subtitle;
       inputAuthor.value = parsed.author;
       updateMockupText();
 
-      // Convert the parsed pixels back to an Image so we can load it in the editor
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = 32;
-      tempCanvas.height = 32;
-      const tempCtx = tempCanvas.getContext('2d');
-      const imgData = tempCtx.createImageData(32, 32);
+      // Turn the decoded icon into an image the editor can load
+      const rgba = pixelsToRgba(parsed.pixels);
+      const iconCanvas = createCanvas(32, 32);
+      iconCanvas.getContext('2d').putImageData(new ImageData(rgba, 32, 32), 0, 0);
+      const dataURL = iconCanvas.toDataURL('image/png');
 
-      for (let i = 0; i < 1024; i++) {
-        const p = parsed.pixels[i];
-        const idx = i * 4;
-        imgData.data[idx] = p.r;
-        imgData.data[idx + 1] = p.g;
-        imgData.data[idx + 2] = p.b;
-        imgData.data[idx + 3] = p.a;
-      }
-      tempCtx.putImageData(imgData, 0, 0);
-
-      const dataURL = tempCanvas.toDataURL('image/png');
-
-      // Load the image just like standard images
       const img = new Image();
       img.onload = function() {
-        loadedImage = img;
+        setLoadedImage(img, dataURL, rgba, 32, 32);
 
-        // Transparency check
-        loadedImageHasTransparency = false;
-        for (let i = 0; i < parsed.pixels.length; i++) {
-          if (parsed.pixels[i].a < 255) {
-            loadedImageHasTransparency = true;
-            break;
-          }
-        }
-
-        // Update transparency info panel visibility
-        if (loadedImageHasTransparency) {
-          transparencyInfo.classList.remove('hidden');
-        } else {
-          transparencyInfo.classList.add('hidden');
-        }
-
-        // Destroy previous cropper instance
-        destroyCropper();
-
-        // Show crop control panel
-        cropControl.classList.remove('hidden');
-        cropEditorImg.src = dataURL;
-
-        // Default to 'fit' layout mode since it's already 32x32 px square
-        layoutMode = 'fit';
-        btnModeCrop.classList.remove('active');
-        btnModeFit.classList.add('active');
-        cropperWrapper.classList.add('hidden');
+        // Already a 32x32 square, so fit it as-is
+        setLayoutMode('fit');
 
         // Keep the dropzone itself in its default, empty prompt state so
         // it's obvious the user can still click/drop a different image or
@@ -430,15 +413,10 @@ function handleBinSelect(file) {
         binPreviewSlot.appendChild(cropPreviewCanvas);
         cropPreviewCanvas.classList.remove('hidden');
 
-        const crcHex = `0x${parsed.calculatedCrc.toString(16).toUpperCase().padStart(4, '0')}`;
-        const crcBadge = parsed.crcValid
-          ? `<span class="crc-badge valid" title="CRC16 checksum matches specification">CRC OK (${crcHex})</span>`
-          : `<span class="crc-badge warning" title="Stored CRC was 0x${parsed.embeddedCrc.toString(16).toUpperCase().padStart(4, '0')}">CRC Mismatch (fixed on export)</span>`;
-
-        binLoadedText.innerHTML = `Editing existing <code>banner.bin</code>: icon, title & text imported from "${escapeHtml(file.name)}" ${crcBadge}.`;
+        binLoadedText.innerHTML = `Editing existing <code>banner.bin</code> (${parsed.format.name}): icon, title & text imported from "${escapeHtml(file.name)}" ${crcBadgeHtml(parsed.crcChecks)}.${exportLossHtml(parsed.lostOnExport)}`;
         binLoadedInfo.classList.remove('hidden');
 
-        // Process image to populate currentPixels and trigger updateBannerData
+        // Populate currentPixels and the preview
         processImage();
       };
 
@@ -481,85 +459,43 @@ function updateMockupText() {
   mockAuthor.classList.toggle('hidden', !a);
 }
 
+function scheduleProcessImage() {
+  if (processImageFrame) return;
+  processImageFrame = requestAnimationFrame(() => {
+    processImageFrame = 0;
+    processImage();
+  });
+}
+
+// The square area of loadedImage that becomes the icon, in image pixels.
+function cropRegion() {
+  if (!cropperInstance) return null;
+  const data = cropperInstance.getData(true);
+  // aspectRatio is 1, but rounding can leave width and height 1px apart.
+  const size = Math.min(data.width, data.height);
+  return size > 0 ? { x: data.x, y: data.y, size } : null;
+}
+
+// Fit mode centers the whole image in a square; the padding is transparent.
+function fitRegion() {
+  const { width, height } = loadedImage;
+  const size = Math.max(width, height);
+  return { x: -Math.floor((size - width) / 2), y: -Math.floor((size - height) / 2), size };
+}
+
 function processImage() {
-  if (!loadedImage) return;
+  if (!loadedImage || !imageSource) return;
 
-  const width = loadedImage.width;
-  const height = loadedImage.height;
-  const pCtx = cropPreviewCanvas.getContext('2d');
-  pCtx.imageSmoothingEnabled = false;
-  pCtx.mozImageSmoothingEnabled = false;
-  pCtx.webkitImageSmoothingEnabled = false;
+  const region = layoutMode === 'crop' ? cropRegion() : fitRegion();
+  if (!region) return;
 
-  if (layoutMode === 'crop') {
-    // Get cropping coordinates from Cropper.js
-    if (!cropperInstance) return;
-    const data = cropperInstance.getData(true);
-    const cropX = data.x;
-    const cropY = data.y;
-    const cropW = data.width;
-    const cropH = data.height;
+  // High-res preview of the region (96x96)
+  const previewScale = CROP_PREVIEW_SIZE / region.size;
+  cropPreviewCtx.clearRect(0, 0, CROP_PREVIEW_SIZE, CROP_PREVIEW_SIZE);
+  cropPreviewCtx.drawImage(loadedImage, -region.x * previewScale, -region.y * previewScale, loadedImage.width * previewScale, loadedImage.height * previewScale);
 
-    // Draw the high-res crop preview thumbnail (96x96px)
-    pCtx.clearRect(0, 0, 96, 96);
-    pCtx.drawImage(loadedImage, cropX, cropY, cropW, cropH, 0, 0, 96, 96);
-
-    // Create a temporary canvas at square cropped size to read pixels
-    const srcCanvas = document.createElement('canvas');
-    srcCanvas.width = cropW;
-    srcCanvas.height = cropH;
-    const srcCtx = srcCanvas.getContext('2d');
-    srcCtx.imageSmoothingEnabled = false;
-    srcCtx.mozImageSmoothingEnabled = false;
-    srcCtx.webkitImageSmoothingEnabled = false;
-    srcCtx.drawImage(loadedImage, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-
-    const srcImgData = srcCtx.getImageData(0, 0, cropW, cropH);
-
-    // Use area-averaging box scaling to downscale cleanly to 32x32
-    currentPixels = downscaleBox(srcImgData.data, cropW);
-  } else {
-    // Fit Mode: scale entire image to fit 32x32 square and keep transparency
-    const size = Math.max(width, height);
-
-    // Setup 96x96 preview (clear to keep transparent)
-    pCtx.clearRect(0, 0, 96, 96);
-
-    // Create high-res fit canvas
-    const srcCanvas = document.createElement('canvas');
-    srcCanvas.width = size;
-    srcCanvas.height = size;
-    const srcCtx = srcCanvas.getContext('2d');
-    srcCtx.imageSmoothingEnabled = false;
-    srcCtx.mozImageSmoothingEnabled = false;
-    srcCtx.webkitImageSmoothingEnabled = false;
-    srcCtx.clearRect(0, 0, size, size);
-
-    let scaleW, scaleH, destX, destY;
-    if (width > height) {
-      // Landscape
-      scaleW = size;
-      scaleH = size * (height / width);
-      destX = 0;
-      destY = Math.floor((size - scaleH) / 2);
-    } else {
-      // Portrait
-      scaleH = size;
-      scaleW = size * (width / height);
-      destY = 0;
-      destX = Math.floor((size - scaleW) / 2);
-    }
-
-    // Draw fitted image on high-res canvas
-    srcCtx.drawImage(loadedImage, destX, destY, scaleW, scaleH);
-    
-    // Draw fitted image on 96x96 preview
-    const previewScale = 96 / size;
-    pCtx.drawImage(loadedImage, destX * previewScale, destY * previewScale, scaleW * previewScale, scaleH * previewScale);
-
-    const srcImgData = srcCtx.getImageData(0, 0, size, size);
-    currentPixels = downscaleBox(srcImgData.data, size);
-  }
+  // Area-average the region down to 32x32
+  currentPixels = downscaleRegion(imageSource, region.x * imageSourceScale, region.y * imageSourceScale, region.size * imageSourceScale);
 
   updateBannerData();
 }
@@ -567,81 +503,37 @@ function processImage() {
 function updateBannerData() {
   if (!currentPixels) return;
 
-  // Perform quantization
   const { palette, indices } = quantize(currentPixels, 15, pixelArtEnhance);
-
-  // Render quantized live preview
   renderPreview(palette, indices);
-
-  // Generate binary package to compute live CRCs
-  const title = inputTitle.value;
-  const subtitle = inputSubtitle.value;
-  const author = inputAuthor.value;
-
-  const bannerBin = packBanner(currentPixels, title, subtitle, author, pixelArtEnhance);
-
-  // Enable download
   downloadBtn.disabled = false;
 }
 
 function renderPreview(palette, indices) {
-  // Create 32x32 buffer image data
-  const buffer = resizeCtx.createImageData(32, 32);
-  
-  for (let i = 0; i < 1024; i++) {
-    const paletteIndex = indices[i];
-    const color = palette[paletteIndex];
-    const bufferIdx = i * 4;
+  resizeCtx.putImageData(new ImageData(indicesToRgba(palette, indices), 32, 32), 0, 0);
+  showIconPreview();
+}
 
-    if (paletteIndex === 0) {
-      // Transparency
-      buffer.data[bufferIdx] = 0;
-      buffer.data[bufferIdx + 1] = 0;
-      buffer.data[bufferIdx + 2] = 0;
-      buffer.data[bufferIdx + 3] = 0;
-    } else {
-      buffer.data[bufferIdx] = color.r;
-      buffer.data[bufferIdx + 1] = color.g;
-      buffer.data[bufferIdx + 2] = color.b;
-      buffer.data[bufferIdx + 3] = 255;
-    }
-  }
-
-  // Draw 32x32 onto offscreen canvas
-  resizeCtx.putImageData(buffer, 0, 0);
-
-  // Clear preview canvas
-  previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
-  
-  // Draw scaled-up crisp preview
-  previewCtx.imageSmoothingEnabled = false;
-  previewCtx.mozImageSmoothingEnabled = false;
-  previewCtx.webkitImageSmoothingEnabled = false;
-  
+// Scales the 32x32 icon on resizeCanvas up onto the console mockup.
+function showIconPreview() {
+  clearCanvas();
   previewCtx.drawImage(resizeCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
 }
 
+function saveFile(bytes, filename) {
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
 
 function triggerDownload() {
   if (!currentPixels) return;
 
-  const title = inputTitle.value;
-  const subtitle = inputSubtitle.value;
-  const author = inputAuthor.value;
-
-  const bannerBin = packBanner(currentPixels, title, subtitle, author, pixelArtEnhance);
-  const blob = new Blob([bannerBin], { type: 'application/octet-stream' });
-  const url = URL.createObjectURL(blob);
-  
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'banner.bin';
-  document.body.appendChild(link);
-  link.click();
-  
-  // Cleanup
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  saveFile(packBanner(currentPixels, inputTitle.value, inputSubtitle.value, inputAuthor.value, pixelArtEnhance), 'banner.bin');
 
   // Browsers don't reliably surface a visible signal that a download
   // succeeded, and this button is a documented step in external guides
@@ -663,24 +555,12 @@ function resetAll() {
   inputTitle.value = '';
   inputSubtitle.value = '';
   inputAuthor.value = '';
-  loadedImage = null;
-  currentPixels = null;
-  downloadBtn.disabled = true;
-  clearCanvas();
+  unloadImage();
   updateMockupText();
   clearError();
-  resetDropzonePrompt();
   drawPlaceholderIcon();
-  
-  // Reset preview scale state to 1×
-  dsIconSlot.classList.remove('scale-2x');
-  btnScale1x.classList.add('active');
-  btnScale2x.classList.remove('active');
-
-  // Reset pixel enhance toggle to off
-  pixelArtEnhance = false;
-  btnPixelArtOff.classList.add('active');
-  btnPixelArtOn.classList.remove('active');
+  setPreviewScale2x(false);
+  setPixelArtEnhance(false);
 }
 
 function resetDropzonePrompt() {
@@ -693,18 +573,14 @@ function resetDropzonePrompt() {
   dropzoneFilename.classList.add('hidden');
   dropzoneFilename.textContent = '';
 
-  // Hide transparency info card
-  loadedImageHasTransparency = false;
   transparencyInfo.classList.add('hidden');
 
   // Hide "editing existing banner.bin" indicator
   binLoadedInfo.classList.add('hidden');
   binLoadedText.textContent = '';
 
-  // Clear the preview canvas
-  const pCtx = cropPreviewCanvas.getContext('2d');
-  pCtx.clearRect(0, 0, 96, 96);
-  
+  cropPreviewCtx.clearRect(0, 0, CROP_PREVIEW_SIZE, CROP_PREVIEW_SIZE);
+
   // Destroy Cropper.js instance and clear image src
   destroyCropper();
   cropEditorImg.src = '';
@@ -713,26 +589,26 @@ function resetDropzonePrompt() {
 function drawPlaceholderIcon() {
   const ctx = resizeCtx;
   ctx.clearRect(0, 0, 32, 32);
-  
+
   // Draw a cute retro game cartridge outline
   ctx.fillStyle = '#475569'; // slate-600 (cartridge body)
   ctx.fillRect(4, 4, 24, 24);
-  
+
   // Label sticker border
   ctx.fillStyle = '#1e293b'; // slate-800
   ctx.fillRect(6, 6, 20, 16);
-  
+
   // D-Pad icon inside label (cyan accent)
   ctx.fillStyle = '#22d3ee';
   ctx.fillRect(9, 13, 5, 2);
   ctx.fillRect(10, 12, 3, 4);
-  
+
   // Pixelated face buttons (red and yellow)
   ctx.fillStyle = '#ef4444'; // Red button
   ctx.fillRect(19, 13, 2, 2);
   ctx.fillStyle = '#eab308'; // Yellow button
   ctx.fillRect(17, 15, 2, 2);
-  
+
   // Bottom cartridge pins
   ctx.fillStyle = '#0f172a'; // slate-900 (groove)
   ctx.fillRect(6, 22, 20, 2);
@@ -740,13 +616,8 @@ function drawPlaceholderIcon() {
   for (let x = 8; x < 24; x += 4) {
     ctx.fillRect(x, 24, 2, 2);
   }
-  
-  // Render this cartridge pattern onto the console mockup preview canvas!
-  previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
-  previewCtx.imageSmoothingEnabled = false;
-  previewCtx.mozImageSmoothingEnabled = false;
-  previewCtx.webkitImageSmoothingEnabled = false;
-  previewCtx.drawImage(resizeCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
+
+  showIconPreview();
 }
 
 // Initial triggers

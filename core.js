@@ -1,7 +1,8 @@
 /**
  * Core business logic for DS Banner Maker.
  * DOM-independent pure functions for Node.js testing and Browser support.
- * Targets Nintendo DS NTR v1 banner.bin format (2112 bytes / 0x840).
+ * Writes NTR v1 banner.bin files (2112 bytes / 0x840); reads NTR v1-v3 and
+ * DSi animated banners.
  */
 
 /**
@@ -25,6 +26,27 @@ export function crc16(data, initial = 0xFFFF) {
   return crc;
 }
 
+// Icon/Title layout (GBATEK "DS Cartridge Icon/Title", TwlSDK BannerHeader)
+const NTR_V1_SIZE = 0x840;
+const ICON_BITMAP = 0x20; // 512 bytes: 4bpp, 4x4 tiles of 8x8 pixels
+const ICON_BITMAP_SIZE = 0x200;
+const ICON_PALETTE = 0x220; // 16 RGB555 colors, index 0 = transparent
+const ICON_PALETTE_SIZE = 0x20;
+const TITLE_SLOTS = 0x240; // UTF-16LE, 128 code units per language slot
+const TITLE_SLOT_SIZE = 0x100;
+const ANIM_BITMAPS = 0x1240; // DSi animated only: 8 bitmaps
+const ANIM_PALETTES = 0x2240; // 8 palettes
+const ANIM_SEQUENCE = 0x2340; // 64 u16 tokens
+
+function readU16(bytes, offset) {
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+function writeU16(bytes, offset, value) {
+  bytes[offset] = value & 0xFF;
+  bytes[offset + 1] = (value >> 8) & 0xFF;
+}
+
 /**
  * Convert string to UTF-16LE bytes.
  * @param {string} str
@@ -33,9 +55,7 @@ export function crc16(data, initial = 0xFFFF) {
 export function stringToUtf16Le(str) {
   const buf = new Uint8Array(str.length * 2);
   for (let i = 0; i < str.length; i++) {
-    const code = str.charCodeAt(i);
-    buf[i * 2] = code & 0xFF;
-    buf[i * 2 + 1] = (code >> 8) & 0xFF;
+    writeU16(buf, i * 2, str.charCodeAt(i));
   }
   return buf;
 }
@@ -48,7 +68,7 @@ export function stringToUtf16Le(str) {
 export function utf16LeToString(bytes) {
   let str = "";
   for (let i = 0; i < bytes.length; i += 2) {
-    const code = bytes[i] | (bytes[i + 1] << 8);
+    const code = readU16(bytes, i);
     if (code === 0) break;
     str += String.fromCharCode(code);
   }
@@ -66,8 +86,10 @@ export function rgb8To5(v) {
 }
 
 /**
- * Hardware-accurate expansion of 5-bit channel (0..31) to 8-bit channel (0..255).
- * Uses Nintendo DS GXRgba hardware bit replication: (v << 3) | (v >> 2).
+ * Expands a 5-bit channel (0..31) to 8-bit (0..255) by bit replication:
+ * (v << 3) | (v >> 2). Maps 0 to 0 and 31 to 255. The console itself outputs
+ * 6-bit channels to its 18-bit LCD (2D engine: 0 stays 0, else v * 2 + 1), so
+ * this is the standard display approximation, not an exact hardware value.
  * @param {number} v
  * @returns {number} 0..255
  */
@@ -135,6 +157,16 @@ const DITHER_STRENGTH = 24; // Max +/- offset applied per channel before nearest
  * Perceptual weighted color distance squared.
  * Uses 2*dr^2 + 4*dg^2 + 3*db^2 matching human eye and retro DS LCD sensitivity.
  */
+// Index 0 is transparent (its color is never shown), then the given colors,
+// then black for unused entries: always 16 colors.
+function buildPalette(colors) {
+  const palette = [{ r: 255, g: 0, b: 255 }, ...colors];
+  while (palette.length < 16) {
+    palette.push({ r: 0, g: 0, b: 0 });
+  }
+  return palette;
+}
+
 function colorDistanceSq(r1, g1, b1, r2, g2, b2) {
   const dr = r1 - r2;
   const dg = g1 - g2;
@@ -173,13 +205,9 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
     }
   }
 
-  // If no opaque pixels, return transparent magenta palette and zero indices
+  // If no opaque pixels, every index stays 0 (transparent)
   if (opaquePixels.length === 0) {
-    const palette = [{ r: 255, g: 0, b: 255 }];
-    while (palette.length < 16) {
-      palette.push({ r: 0, g: 0, b: 0 });
-    }
-    return { palette, indices };
+    return { palette: buildPalette([]), indices };
   }
 
   // Fast path: if image already fits within maxColors unique 15-bit colors,
@@ -197,14 +225,10 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
   }
 
   if (withinBudget) {
-    const palette = [{ r: 255, g: 0, b: 255 }]; // index 0 transparent
+    const palette = buildPalette([...uniqueColors.values()]);
     const keyToIndex = new Map();
-    for (const [key15, color] of uniqueColors) {
-      keyToIndex.set(key15, palette.length);
-      palette.push(color);
-    }
-    while (palette.length < 16) {
-      palette.push({ r: 0, g: 0, b: 0 });
+    for (const key15 of uniqueColors.keys()) {
+      keyToIndex.set(key15, keyToIndex.size + 1);
     }
 
     for (const p of opaquePixels) {
@@ -271,27 +295,21 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
     buckets.splice(splitBucketIndex, 1, part1, part2);
   }
 
-  // Build the palette (index 0 is transparent magenta), snapping averages to RGB555
-  const palette = [{ r: 255, g: 0, b: 255 }];
-  for (let i = 0; i < buckets.length; i++) {
-    const bucket = buckets[i];
+  // Each bucket's average color, snapped to RGB555
+  const palette = buildPalette(buckets.map(bucket => {
     let sumR = 0, sumG = 0, sumB = 0;
     for (const p of bucket) {
       sumR += p.r;
       sumG += p.g;
       sumB += p.b;
     }
-    const avgR = Math.round(sumR / bucket.length);
-    const avgG = Math.round(sumG / bucket.length);
-    const avgB = Math.round(sumB / bucket.length);
-    const snapped = snapToRgb555(avgR, avgG, avgB);
-    palette.push({ r: snapped.r, g: snapped.g, b: snapped.b });
-  }
-
-  // Pad palette to 16 colors
-  while (palette.length < 16) {
-    palette.push({ r: 0, g: 0, b: 0 });
-  }
+    const snapped = snapToRgb555(
+      Math.round(sumR / bucket.length),
+      Math.round(sumG / bucket.length),
+      Math.round(sumB / bucket.length)
+    );
+    return { r: snapped.r, g: snapped.g, b: snapped.b };
+  }));
 
   // Refine pixel mapping using perceptual distance
   for (const p of opaquePixels) {
@@ -321,28 +339,34 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
   return { palette, indices };
 }
 
+// TILED_PIXEL[i] is the 32x32 pixel index held in the low nibble of tiled
+// bitmap byte i; the high nibble holds the pixel to its right. Tiles are
+// 8x8, stored row by row, 4 bytes per tile row.
+const TILED_PIXEL = (() => {
+  const map = new Uint16Array(ICON_BITMAP_SIZE);
+  let byteIndex = 0;
+  for (let tileRow = 0; tileRow < 4; tileRow++) {
+    for (let tileCol = 0; tileCol < 4; tileCol++) {
+      for (let pixelRow = 0; pixelRow < 8; pixelRow++) {
+        for (let pixelCol = 0; pixelCol < 8; pixelCol += 2) {
+          map[byteIndex++] = (tileRow * 8 + pixelRow) * 32 + tileCol * 8 + pixelCol;
+        }
+      }
+    }
+  }
+  return map;
+})();
+
 /**
  * Packs 32x32 pixel indices into a tile-encoded 4bpp bitmap (512 bytes).
  * @param {Uint8Array} indices - 1024 pixel indices (0..15)
  * @returns {Uint8Array} 512 bytes
  */
 export function tileEncode(indices) {
-  const bitmap = new Uint8Array(512);
-  let byteIndex = 0;
-
-  for (let tileRow = 0; tileRow < 4; tileRow++) {
-    for (let tileCol = 0; tileCol < 4; tileCol++) {
-      for (let pixelRow = 0; pixelRow < 8; pixelRow++) {
-        const y = tileRow * 8 + pixelRow;
-        for (let pixelCol = 0; pixelCol < 8; pixelCol += 2) {
-          const x1 = tileCol * 8 + pixelCol;
-          const x2 = x1 + 1;
-          const idx1 = indices[y * 32 + x1];
-          const idx2 = indices[y * 32 + x2];
-          bitmap[byteIndex++] = (idx1 & 0x0F) | ((idx2 & 0x0F) << 4);
-        }
-      }
-    }
+  const bitmap = new Uint8Array(ICON_BITMAP_SIZE);
+  for (let i = 0; i < bitmap.length; i++) {
+    const p = TILED_PIXEL[i];
+    bitmap[i] = (indices[p] & 0x0F) | ((indices[p + 1] & 0x0F) << 4);
   }
   return bitmap;
 }
@@ -354,67 +378,66 @@ export function tileEncode(indices) {
  */
 export function tileDecode(bitmap) {
   const indices = new Uint8Array(1024);
-  let byteIndex = 0;
-  for (let tileRow = 0; tileRow < 4; tileRow++) {
-    for (let tileCol = 0; tileCol < 4; tileCol++) {
-      for (let pixelRow = 0; pixelRow < 8; pixelRow++) {
-        const y = tileRow * 8 + pixelRow;
-        for (let pixelCol = 0; pixelCol < 8; pixelCol += 2) {
-          const byteVal = bitmap[byteIndex++];
-          const idx1 = byteVal & 0x0F;
-          const idx2 = (byteVal >> 4) & 0x0F;
-          const x1 = tileCol * 8 + pixelCol;
-          const x2 = x1 + 1;
-          indices[y * 32 + x1] = idx1;
-          indices[y * 32 + x2] = idx2;
-        }
-      }
-    }
+  for (let i = 0; i < ICON_BITMAP_SIZE; i++) {
+    const p = TILED_PIXEL[i];
+    indices[p] = bitmap[i] & 0x0F;
+    indices[p + 1] = (bitmap[i] >> 4) & 0x0F;
   }
   return indices;
 }
 
 /**
  * Converts an RGB palette to 16 little-endian RGB555 values (32 bytes).
- * Uses hardware-accurate 5-bit conversion.
+ * Rounds each 8-bit channel to the nearest 5-bit value.
  * @param {Array<{r: number, g: number, b: number}>} palette
  * @returns {Uint8Array} 32 bytes
  */
 export function paletteToRgb555(palette) {
-  const bytes = new Uint8Array(32);
+  const bytes = new Uint8Array(ICON_PALETTE_SIZE);
   for (let i = 0; i < 16; i++) {
     const color = palette[i] || { r: 0, g: 0, b: 0 };
-    const r5 = rgb8To5(color.r);
-    const g5 = rgb8To5(color.g);
-    const b5 = rgb8To5(color.b);
-    const val = r5 | (g5 << 5) | (b5 << 10);
-    bytes[i * 2] = val & 0xFF;
-    bytes[i * 2 + 1] = (val >> 8) & 0xFF;
+    writeU16(bytes, i * 2, snapToRgb555(color.r, color.g, color.b).key15);
   }
   return bytes;
 }
 
 /**
  * Converts 16 little-endian RGB555 values (32 bytes) to an RGB palette.
- * Uses hardware-accurate bit replication for 5-bit to 8-bit expansion.
+ * Expands channels with rgb5To8 bit replication.
  * @param {Uint8Array} bytes - 32 bytes
  * @returns {Array<{r: number, g: number, b: number}>} 16 RGB colors
  */
 export function rgb555ToPalette(bytes) {
   const palette = [];
   for (let i = 0; i < 16; i++) {
-    const offset = i * 2;
-    const val = bytes[offset] | (bytes[offset + 1] << 8);
-    const r5 = val & 0x1F;
-    const g5 = (val >> 5) & 0x1F;
-    const b5 = (val >> 10) & 0x1F;
+    const val = readU16(bytes, i * 2);
     palette.push({
-      r: rgb5To8(r5),
-      g: rgb5To8(g5),
-      b: rgb5To8(b5)
+      r: rgb5To8(val & 0x1F),
+      g: rgb5To8((val >> 5) & 0x1F),
+      b: rgb5To8((val >> 10) & 0x1F)
     });
   }
   return palette;
+}
+
+/**
+ * Renders palette indices as RGBA. Index 0 is transparent (0, 0, 0, 0);
+ * every other index is its opaque palette color.
+ * @param {Array<{r: number, g: number, b: number}>} palette
+ * @param {Uint8Array} indices - 1024 pixel indices
+ * @returns {Uint8ClampedArray} 32x32 RGBA pixels
+ */
+export function indicesToRgba(palette, indices) {
+  const rgba = new Uint8ClampedArray(indices.length * 4);
+  for (let i = 0; i < indices.length; i++) {
+    if (indices[i] === 0) continue;
+    const color = palette[indices[i]];
+    rgba[i * 4] = color.r;
+    rgba[i * 4 + 1] = color.g;
+    rgba[i * 4 + 2] = color.b;
+    rgba[i * 4 + 3] = 255;
+  }
+  return rgba;
 }
 
 /**
@@ -429,45 +452,118 @@ export function rgb555ToPalette(bytes) {
  * @returns {Uint8Array} The packed 2112-byte banner.bin
  */
 export function packBanner(pixels, title, subtitle, author, enhance = false) {
-  const banner = new Uint8Array(2112); // Exactly 0x840 bytes
+  const banner = new Uint8Array(NTR_V1_SIZE);
+  writeU16(banner, 0x00, 0x0001); // Version: NTR v1
 
-  // 1. Version 0x0001 (NTR v1 banner)
-  banner[0] = 0x01;
-  banner[1] = 0x00;
-
-  // 2. Quantize and pack icon
+  // Icon: 15 colors plus transparent index 0
   const { palette, indices } = quantize(pixels, 15, enhance);
-  const iconBitmap = tileEncode(indices);
-  const iconPalette = paletteToRgb555(palette);
+  banner.set(tileEncode(indices), ICON_BITMAP);
+  banner.set(paletteToRgb555(palette), ICON_PALETTE);
 
-  // 3. Write icon at offset 0x20
-  banner.set(iconBitmap, 0x20);
-  banner.set(iconPalette, 0x220);
-
-  // 4. Encode title blocks (offset 0x240)
-  const lines = [];
-  if (title && title.trim()) lines.push(title.trim());
-  if (subtitle && subtitle.trim()) lines.push(subtitle.trim());
-  if (author && author.trim()) lines.push(author.trim());
-  let titleString = lines.join('\n');
-  if (titleString.length > 127) {
-    titleString = titleString.slice(0, 127);
-  }
+  // Title text: non-empty lines joined by LF, at most 127 code units so the
+  // slot always ends with a NUL, replicated into language slots 0..5
+  const titleString = [title, subtitle, author]
+    .map(line => (line ? line.trim() : ''))
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 127);
   const titleBytes = stringToUtf16Le(titleString);
-
-  // Replicate into language slots 0..5 (each slot 256 bytes)
-  const titleBlock = new Uint8Array(256);
-  titleBlock.set(titleBytes.subarray(0, 254)); // Ensure 2 bytes NUL termination space
-  for (let i = 0; i < 6; i++) {
-    banner.set(titleBlock, 0x240 + i * 256);
+  for (let slot = 0; slot < 6; slot++) {
+    banner.set(titleBytes, TITLE_SLOTS + slot * TITLE_SLOT_SIZE);
   }
 
-  // 5. Compute version1Crc: CRC16 over [0x20, 0x840)
-  const v1CrcVal = crc16(banner.subarray(0x20, 0x840));
-  banner[0x02] = v1CrcVal & 0xFF;
-  banner[0x03] = (v1CrcVal >> 8) & 0xFF;
-
+  writeU16(banner, 0x02, crc16(banner.subarray(ICON_BITMAP, NTR_V1_SIZE)));
   return banner;
+}
+
+/**
+ * Area-averaging (box-filter) resampler shared by downscaleBox and the
+ * downscale pyramid. Samples the source region [rx, rx + rw) x [ry, ry + rh)
+ * into a dw x dh RGBA grid.
+ *
+ * Color is weighted by overlap area * alpha, so fully transparent pixels never
+ * pull their hidden RGB (usually black or white) into anti-aliased edges.
+ * Region parts outside the source count as fully transparent area.
+ *
+ * @returns {Uint8ClampedArray} dw * dh RGBA pixels (unpremultiplied)
+ */
+function resampleBox(src, srcW, srcH, rx, ry, rw, rh, dw, dh) {
+  const out = new Uint8ClampedArray(dw * dh * 4);
+  const ratioX = rw / dw;
+  const ratioY = rh / dh;
+  let o = 0;
+
+  for (let dy = 0; dy < dh; dy++) {
+    const yStart = ry + dy * ratioY;
+    const yEnd = ry + (dy + 1) * ratioY;
+    const syStart = Math.floor(yStart);
+    const syEnd = Math.ceil(yEnd);
+
+    for (let dx = 0; dx < dw; dx++) {
+      const xStart = rx + dx * ratioX;
+      const xEnd = rx + (dx + 1) * ratioX;
+      const sxStart = Math.floor(xStart);
+      const sxEnd = Math.ceil(xEnd);
+
+      let sumR = 0, sumG = 0, sumB = 0, sumA = 0;
+      let sumWeight = 0;
+      let sumAlphaWeight = 0;
+
+      for (let sy = syStart; sy < syEnd; sy++) {
+        const overlapY = Math.min(sy + 1, yEnd) - Math.max(sy, yStart);
+        const rowInside = sy >= 0 && sy < srcH;
+
+        for (let sx = sxStart; sx < sxEnd; sx++) {
+          const overlapX = Math.min(sx + 1, xEnd) - Math.max(sx, xStart);
+          const weight = overlapX * overlapY;
+          sumWeight += weight;
+          if (!rowInside || sx < 0 || sx >= srcW) continue;
+
+          const srcIdx = (sy * srcW + sx) * 4;
+          const srcA = src[srcIdx + 3];
+          if (srcA > 0) {
+            // Weight color contribution by both area overlap and pixel alpha
+            const alphaWeight = weight * (srcA / 255);
+            sumR += src[srcIdx] * alphaWeight;
+            sumG += src[srcIdx + 1] * alphaWeight;
+            sumB += src[srcIdx + 2] * alphaWeight;
+            sumA += srcA * weight;
+            sumAlphaWeight += alphaWeight;
+          }
+        }
+      }
+
+      if (sumAlphaWeight > 0) {
+        out[o] = Math.round(sumR / sumAlphaWeight);
+        out[o + 1] = Math.round(sumG / sumAlphaWeight);
+        out[o + 2] = Math.round(sumB / sumAlphaWeight);
+      }
+      out[o + 3] = sumWeight > 0 ? Math.round(sumA / sumWeight) : 0;
+      o += 4;
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Flattens {r, g, b, a} pixel objects into RGBA bytes (ImageData layout).
+ * @param {Array<{r: number, g: number, b: number, a: number}>} pixels
+ * @returns {Uint8ClampedArray}
+ */
+export function pixelsToRgba(pixels) {
+  const rgba = new Uint8ClampedArray(pixels.length * 4);
+  pixels.forEach((p, i) => rgba.set([p.r, p.g, p.b, p.a], i * 4));
+  return rgba;
+}
+
+function toPixelObjects(rgba) {
+  const pixels = new Array(rgba.length / 4);
+  for (let i = 0; i < pixels.length; i++) {
+    const o = i * 4;
+    pixels[i] = { r: rgba[o], g: rgba[o + 1], b: rgba[o + 2], a: rgba[o + 3] };
+  }
+  return pixels;
 }
 
 /**
@@ -479,127 +575,193 @@ export function packBanner(pixels, title, subtitle, author, enhance = false) {
  * @returns {Array<{r: number, g: number, b: number, a: number}>} 1024 resized pixels
  */
 export function downscaleBox(srcData, srcSize) {
-  const destSize = 32;
-  const ratio = srcSize / destSize;
-  const destPixels = [];
+  return toPixelObjects(resampleBox(srcData, srcSize, srcSize, 0, 0, srcSize, srcSize, 32, 32));
+}
 
-  for (let dy = 0; dy < destSize; dy++) {
-    const yStart = dy * ratio;
-    const yEnd = (dy + 1) * ratio;
-    const syStart = Math.floor(yStart);
-    const syEnd = Math.ceil(yEnd);
+// A region keeps at least this many source samples per axis (8 per icon
+// pixel) when downscaleRegion picks a smaller pyramid level.
+const PYRAMID_MIN_SAMPLES = 256;
 
-    for (let dx = 0; dx < destSize; dx++) {
-      const xStart = dx * ratio;
-      const xEnd = (dx + 1) * ratio;
-      const sxStart = Math.floor(xStart);
-      const sxEnd = Math.ceil(xEnd);
-
-      let sumR = 0, sumG = 0, sumB = 0, sumA = 0;
-      let sumWeight = 0;
-      let sumAlphaWeight = 0;
-
-      for (let sy = syStart; sy < syEnd; sy++) {
-        if (sy < 0 || sy >= srcSize) continue;
-        const overlapY = Math.min(sy + 1, yEnd) - Math.max(sy, yStart);
-
-        for (let sx = sxStart; sx < sxEnd; sx++) {
-          if (sx < 0 || sx >= srcSize) continue;
-          const overlapX = Math.min(sx + 1, xEnd) - Math.max(sx, xStart);
-          const weight = overlapX * overlapY;
-          const srcIdx = (sy * srcSize + sx) * 4;
-
-          const srcA = srcData[srcIdx + 3];
-          if (srcA > 0) {
-            // Weight color contribution by both area overlap and pixel alpha
-            const alphaWeight = weight * (srcA / 255);
-            sumR += srcData[srcIdx] * alphaWeight;
-            sumG += srcData[srcIdx + 1] * alphaWeight;
-            sumB += srcData[srcIdx + 2] * alphaWeight;
-            sumA += srcA * weight;
-            sumAlphaWeight += alphaWeight;
-          }
-          sumWeight += weight;
-        }
-      }
-
-      const avgA = sumWeight > 0 ? Math.round(sumA / sumWeight) : 0;
-
-      destPixels.push({
-        r: sumAlphaWeight > 0 ? Math.round(sumR / sumAlphaWeight) : 0,
-        g: sumAlphaWeight > 0 ? Math.round(sumG / sumAlphaWeight) : 0,
-        b: sumAlphaWeight > 0 ? Math.round(sumB / sumAlphaWeight) : 0,
-        a: avgA
-      });
-    }
+/**
+ * Prepares an RGBA image for repeated downscaleRegion calls (e.g. while a
+ * crop box is dragged). Builds a pyramid of half-size levels with the same
+ * alpha-weighted box filter, so a large region costs about as much as a
+ * 256-512 px one. Level 0 is the source data itself (not copied).
+ *
+ * @param {Uint8ClampedArray} rgba - Raw RGBA pixel data
+ * @param {number} width
+ * @param {number} height
+ * @returns {{width: number, height: number, levels: Array<{data: Uint8ClampedArray, width: number, height: number}>}}
+ */
+export function createImageSource(rgba, width, height) {
+  const levels = [{ data: rgba, width, height }];
+  let level = levels[0];
+  while (Math.max(level.width, level.height) >= PYRAMID_MIN_SAMPLES * 2) {
+    const w = Math.ceil(level.width / 2);
+    const h = Math.ceil(level.height / 2);
+    const data = resampleBox(level.data, level.width, level.height, 0, 0, level.width, level.height, w, h);
+    level = { data, width: w, height: h };
+    levels.push(level);
   }
-
-  return destPixels;
+  return { width, height, levels };
 }
 
 /**
- * Decodes a banner.bin Uint8Array (at least 2112 bytes) back into its constituent parts:
- * - 32x32 RGBA pixels array
- * - Title string
- * - Subtitle string
- * - Author string
- * - CRC validity check
+ * Downscales a square region of an image source to 32x32. The region is in
+ * source pixel coordinates and may extend past the image edges (that area is
+ * transparent, which is how Fit mode pads non-square images).
  *
+ * @param {ReturnType<typeof createImageSource>} source
+ * @param {number} x - Region left edge
+ * @param {number} y - Region top edge
+ * @param {number} size - Region width and height
+ * @returns {Array<{r: number, g: number, b: number, a: number}>} 1024 resized pixels
+ */
+export function downscaleRegion(source, x, y, size) {
+  // Use the smallest level that still keeps PYRAMID_MIN_SAMPLES across the region.
+  let level = source.levels[0];
+  for (let i = 1; i < source.levels.length; i++) {
+    const candidate = source.levels[i];
+    if (size * (candidate.width / source.width) < PYRAMID_MIN_SAMPLES) break;
+    level = candidate;
+  }
+  const sx = level.width / source.width;
+  const sy = level.height / source.height;
+  return toPixelObjects(resampleBox(level.data, level.width, level.height, x * sx, y * sy, size * sx, size * sy, 32, 32));
+}
+
+// Icon/Title versions the DS/DSi system menus accept (GBATEK "DS Cartridge
+// Icon/Title"; TwlSDK BannerHeader). The low byte is the NTR version (1..3),
+// the high byte is the platform (0 = NTR, 1 = TWL animated icon).
+const BANNER_FORMATS = {
+  0x0001: { name: 'NTR v1', size: NTR_V1_SIZE, titleSlots: 6 },
+  0x0002: { name: 'NTR v2 (+ Chinese)', size: 0x940, titleSlots: 7 },
+  0x0003: { name: 'NTR v3 (+ Chinese, Korean)', size: 0xA40, titleSlots: 8 },
+  0x0103: { name: 'DSi animated', size: 0x23C0, titleSlots: 8 }
+};
+
+/**
+ * Identifies the banner format from its version field.
  * @param {Uint8Array} bannerBytes
+ * @returns {{version: number, name: string, size: number, titleSlots: number} | null}
+ *   null when the version is not one of 0x0001, 0x0002, 0x0003, 0x0103.
+ */
+export function getBannerFormat(bannerBytes) {
+  if (bannerBytes.length < 2) return null;
+  const version = readU16(bannerBytes, 0);
+  const format = BANNER_FORMATS[version];
+  return format ? { version, ...format } : null;
+}
+
+/**
+ * Checks every CRC16 the banner's version requires, like the DSi system
+ * menu's BANNER_CheckBanner does. The console discards the whole banner
+ * (no icon, no title) when any of them fails.
+ *
+ * @param {Uint8Array} bannerBytes - At least the format's full size
+ * @param {{version: number}} format - From getBannerFormat()
+ * @returns {Array<{name: string, offset: number, start: number, end: number, embedded: number, calculated: number, valid: boolean}>}
+ */
+export function checkBannerCrcs(bannerBytes, format) {
+  const ranges = [{ name: 'v1', offset: 0x02, start: ICON_BITMAP, end: NTR_V1_SIZE }];
+  const ntrVersion = format.version & 0xFF;
+  if (ntrVersion >= 2) ranges.push({ name: 'v2', offset: 0x04, start: ICON_BITMAP, end: 0x940 });
+  if (ntrVersion >= 3) ranges.push({ name: 'v3', offset: 0x06, start: ICON_BITMAP, end: 0xA40 });
+  if (format.version === 0x0103) ranges.push({ name: 'animation', offset: 0x08, start: ANIM_BITMAPS, end: 0x23C0 });
+
+  return ranges.map(r => {
+    const embedded = readU16(bannerBytes, r.offset);
+    const calculated = crc16(bannerBytes.subarray(r.start, r.end));
+    return { ...r, embedded, calculated, valid: embedded === calculated };
+  });
+}
+
+// True when a DSi animated banner shows something other than its static
+// icon. Sequence tokens: bits 0-7 duration (0 = end), 8-10 bitmap,
+// 11-13 palette, 14 hflip, 15 vflip. A single frame that repeats the static
+// icon (common for "non-animated" DSi banners) counts as no animation.
+function hasVisibleAnimation(bannerBytes) {
+  const frames = new Set();
+  for (let i = 0; i < 64; i++) {
+    const token = readU16(bannerBytes, ANIM_SEQUENCE + i * 2);
+    if ((token & 0xFF) === 0) break;
+    frames.add(token >> 8);
+  }
+  if (frames.size !== 1) return frames.size > 1;
+
+  const frame = [...frames][0];
+  if (frame & 0xC0) return true; // flipped
+  const bitmap = ANIM_BITMAPS + (frame & 0x07) * ICON_BITMAP_SIZE;
+  const pltt = ANIM_PALETTES + ((frame >> 3) & 0x07) * ICON_PALETTE_SIZE;
+  return !sameIconPixels(bannerBytes, ICON_BITMAP, ICON_PALETTE, bitmap, pltt);
+}
+
+// Compares two 4bpp icons by visible color (15-bit), ignoring unused palette
+// entries and the color stored in the transparent entry 0.
+function sameIconPixels(bytes, bitmapA, plttA, bitmapB, plttB) {
+  const color = (pltt, idx) => idx === 0 ? -1 : readU16(bytes, pltt + idx * 2) & 0x7FFF;
+  for (let i = 0; i < ICON_BITMAP_SIZE; i++) {
+    const a = bytes[bitmapA + i];
+    const b = bytes[bitmapB + i];
+    if (color(plttA, a & 0x0F) !== color(plttB, b & 0x0F)) return false;
+    if (color(plttA, a >> 4) !== color(plttB, b >> 4)) return false;
+  }
+  return true;
+}
+
+function readTitleSlot(bannerBytes, slot) {
+  const offset = TITLE_SLOTS + slot * TITLE_SLOT_SIZE;
+  return utf16LeToString(bannerBytes.subarray(offset, offset + TITLE_SLOT_SIZE));
+}
+
+/**
+ * Decodes a banner.bin Uint8Array back into its constituent parts:
+ * - 32x32 RGBA pixels array (the static icon, which every format has)
+ * - Title / Subtitle / Author strings
+ * - Format and CRC validation for every CRC the version requires
+ * - What an NTR v1 re-export (packBanner) would not keep
+ *
+ * @param {Uint8Array} bannerBytes - At least getBannerFormat(bytes).size bytes
  * @returns {{
  *   pixels: Array<{r: number, g: number, b: number, a: number}>,
  *   title: string,
  *   subtitle: string,
  *   author: string,
+ *   format: {version: number, name: string, size: number, titleSlots: number},
+ *   crcChecks: ReturnType<typeof checkBannerCrcs>,
  *   crcValid: boolean,
  *   calculatedCrc: number,
- *   embeddedCrc: number
+ *   embeddedCrc: number,
+ *   lostOnExport: {translations: boolean, chineseKorean: boolean, animation: boolean}
  * }}
+ * @throws {Error} When the version is unknown or the file is shorter than its version requires.
  */
 export function decodeBanner(bannerBytes) {
-  // 1. Decode palette (32 bytes at offset 0x220) using hardware-accurate bit expansion
-  const palette = rgb555ToPalette(bannerBytes.subarray(0x220, 0x240));
-
-  // 2. Decode tile-encoded indices (512 bytes at offset 0x20)
-  const indices = tileDecode(bannerBytes.subarray(0x20, 0x220));
-
-  // 3. Map indices to pixels (RGBA)
-  const pixels = [];
-  for (let i = 0; i < 1024; i++) {
-    const idx = indices[i];
-    const color = palette[idx];
-    if (idx === 0) {
-      // Index 0 is hardware transparency
-      pixels.push({ r: 0, g: 0, b: 0, a: 0 });
-    } else {
-      pixels.push({ r: color.r, g: color.g, b: color.b, a: 255 });
-    }
+  const format = getBannerFormat(bannerBytes);
+  if (!format) {
+    throw new Error('Unknown banner version');
+  }
+  if (bannerBytes.length < format.size) {
+    throw new Error(`Truncated ${format.name} banner`);
   }
 
-  // 4. Decode titles. Check English first (slot 1), then Japanese (slot 0), then others
+  // 1. Static icon (every format has one)
+  const palette = rgb555ToPalette(bannerBytes.subarray(ICON_PALETTE, ICON_PALETTE + ICON_PALETTE_SIZE));
+  const indices = tileDecode(bannerBytes.subarray(ICON_BITMAP, ICON_BITMAP + ICON_BITMAP_SIZE));
+  const pixels = toPixelObjects(indicesToRgba(palette, indices));
+
+  // 2. Decode titles. Check English first (slot 1), then Japanese (slot 0),
+  // then the remaining slots this version defines.
+  const slotTexts = [];
+  for (let slot = 0; slot < format.titleSlots; slot++) {
+    slotTexts.push(readTitleSlot(bannerBytes, slot));
+  }
+  const searchOrder = [1, 0, 2, 3, 4, 5, 6, 7].filter(slot => slot < format.titleSlots);
   let titleString = "";
-  const searchOrder = [1, 0, 2, 3, 4, 5];
-  for (const langIdx of searchOrder) {
-    const offset = 0x240 + langIdx * 256;
-    if (offset + 256 <= bannerBytes.length) {
-      const str = utf16LeToString(bannerBytes.subarray(offset, offset + 256));
-      if (str) {
-        titleString = str;
-        break;
-      }
-    }
-  }
-
-  if (!titleString) {
-    for (let langIdx = 6; langIdx < 16; langIdx++) {
-      const offset = 0x240 + langIdx * 256;
-      if (offset + 256 <= bannerBytes.length) {
-        const str = utf16LeToString(bannerBytes.subarray(offset, offset + 256));
-        if (str) {
-          titleString = str;
-          break;
-        }
-      }
+  for (const slot of searchOrder) {
+    if (slotTexts[slot]) {
+      titleString = slotTexts[slot];
+      break;
     }
   }
 
@@ -607,138 +769,25 @@ export function decodeBanner(bannerBytes) {
   const lines = titleString.split('\n');
   const title = lines[0] ? lines[0].trim() : "";
   const subtitle = lines[1] ? lines[1].trim() : "";
-  const author = lines.slice(2).join('\n') ? lines.slice(2).join('\n').trim() : "";
+  const author = lines.slice(2).join('\n').trim();
 
-  // 5. Checksum verification
-  const calculatedCrc = crc16(bannerBytes.subarray(0x20, 0x840));
-  const embeddedCrc = bannerBytes[2] | (bannerBytes[3] << 8);
-  const crcValid = (calculatedCrc === embeddedCrc);
+  // 3. Checksum verification
+  const crcChecks = checkBannerCrcs(bannerBytes, format);
+  const crcValid = crcChecks.every(c => c.valid);
 
-  return { pixels, title, subtitle, author, crcValid, calculatedCrc, embeddedCrc };
-}
+  // 4. packBanner writes one text to slots 0..5 and no animation
+  const ntrTexts = slotTexts.slice(0, 6).filter(Boolean);
+  const lostOnExport = {
+    translations: new Set(ntrTexts).size > 1,
+    chineseKorean: slotTexts.slice(6).some(Boolean),
+    animation: format.version === 0x0103 && hasVisibleAnimation(bannerBytes)
+  };
 
-/**
- * Generates a Banner Spec File (.bsf) in UTF-16LE format with BOM.
- * Compatible with SDK makebanner and devkitPro ndstool.
- *
- * @param {string} title
- * @param {string} subtitle
- * @param {string} author
- * @returns {Uint8Array} UTF-16LE bytes with BOM
- */
-export function generateBsf(title = "", subtitle = "", author = "") {
-  const lines = [
-    "#BSF --- Banner Spec File",
-    "#---------------------------------------------------------",
-    "# This file must be written in charset UTF-16LE",
-    "#---------------------------------------------------------",
-    "",
-    "Version:\t1",
-    ""
-  ];
-
-  const tags = ['JP', 'EN', 'FR', 'GE', 'IT', 'SP'];
-  const t = title.trim();
-  const s = subtitle.trim();
-  const a = author.trim();
-
-  for (const tag of tags) {
-    if (t || s || a) {
-      lines.push(`${tag}:\t${t}`);
-      if (s || a) lines.push(`\t${s}`);
-      if (a) lines.push(`\t${a}`);
-    } else {
-      lines.push(`${tag}:\t`);
-    }
-    lines.push("");
-  }
-
-  const text = lines.join('\r\n');
-  const textBytes = stringToUtf16Le(text);
-  const out = new Uint8Array(2 + textBytes.length);
-  out[0] = 0xFF; // BOM
-  out[1] = 0xFE;
-  out.set(textBytes, 2);
-  return out;
-}
-
-/**
- * Parses a Banner Spec File (.bsf) in UTF-16LE or string format into Title, Subtitle, Author.
- *
- * @param {Uint8Array|string} content
- * @returns {{title: string, subtitle: string, author: string}}
- */
-export function parseBsf(content) {
-  let text = "";
-  if (typeof content === 'string') {
-    text = content;
-  } else if (content instanceof Uint8Array || (content && content.buffer)) {
-    const bytes = content instanceof Uint8Array ? content : new Uint8Array(content);
-    if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
-      text = new TextDecoder('utf-16le').decode(bytes.subarray(2));
-    } else if (bytes.length >= 2 && bytes[1] === 0x00) {
-      text = new TextDecoder('utf-16le').decode(bytes);
-    } else {
-      text = new TextDecoder('utf-8').decode(bytes);
-    }
-  }
-
-  const lines = text.split(/\r?\n/);
-  let title = "";
-  let subtitle = "";
-  let author = "";
-
-  const langOrder = ['en', 'jp', 'fr', 'ge', 'it', 'sp'];
-  const dataByLang = {};
-
-  let currentLang = null;
-  let currentField = 0;
-
-  for (let rawLine of lines) {
-    const trimmed = rawLine.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-
-    const langMatch = trimmed.match(/^([A-Za-z]{2})\s*:\s*(.*)$/);
-    if (langMatch) {
-      currentLang = langMatch[1].toLowerCase();
-      currentField = 0;
-      if (!dataByLang[currentLang]) dataByLang[currentLang] = [];
-      const remainder = langMatch[2].trim().replace(/^"|"$/g, '');
-      if (remainder) {
-        dataByLang[currentLang].push(remainder);
-        currentField = 1;
-      }
-      continue;
-    }
-
-    if (currentLang && currentField < 3) {
-      const clean = trimmed.replace(/^"|"$/g, '');
-      dataByLang[currentLang].push(clean);
-      currentField++;
-    }
-  }
-
-  // Find first populated language
-  for (const l of langOrder) {
-    if (dataByLang[l] && dataByLang[l].length > 0) {
-      title = dataByLang[l][0] || "";
-      subtitle = dataByLang[l][1] || "";
-      author = dataByLang[l][2] || "";
-      break;
-    }
-  }
-
-  // Fallback if not in standard list
-  if (!title) {
-    for (const l of Object.keys(dataByLang)) {
-      if (dataByLang[l] && dataByLang[l].length > 0) {
-        title = dataByLang[l][0] || "";
-        subtitle = dataByLang[l][1] || "";
-        author = dataByLang[l][2] || "";
-        break;
-      }
-    }
-  }
-
-  return { title, subtitle, author };
+  return {
+    pixels, title, subtitle, author,
+    format, crcChecks, crcValid,
+    calculatedCrc: crcChecks[0].calculated,
+    embeddedCrc: crcChecks[0].embedded,
+    lostOnExport
+  };
 }

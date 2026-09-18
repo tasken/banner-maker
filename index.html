@@ -111,8 +111,8 @@
         </div>
         <p class="info-card-text">
           Your icon has transparent pixels:
-          <br>&bull; <strong>Fully transparent</strong> (opacity 0) maps to palette index 0, rendered as true hardware transparency on&nbsp;DS.
-          <br>&bull; <strong>Semi-transparent</strong> pixels are blended against white to avoid dark outline&nbsp;halos.
+          <br>&bull; Pixels <strong>under 50% opacity</strong> map to palette index 0, rendered as true hardware transparency on&nbsp;DS.
+          <br>&bull; Pixels <strong>at 50% opacity or more</strong> become solid in their own color. Colors aren't mixed with a background, so edges don't get a light or dark&nbsp;halo.
         </p>
       </div>
 
