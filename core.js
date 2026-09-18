@@ -153,10 +153,6 @@ const BAYER_4X4 = [
 ];
 const DITHER_STRENGTH = 24; // Max +/- offset applied per channel before nearest-color lookup
 
-/**
- * Perceptual weighted color distance squared.
- * Uses 2*dr^2 + 4*dg^2 + 3*db^2 matching human eye and retro DS LCD sensitivity.
- */
 // Index 0 is transparent (its color is never shown), then the given colors,
 // then black for unused entries: always 16 colors.
 function buildPalette(colors) {
@@ -167,6 +163,10 @@ function buildPalette(colors) {
   return palette;
 }
 
+/**
+ * Perceptual weighted color distance squared.
+ * Uses 2*dr^2 + 4*dg^2 + 3*db^2 matching human eye and retro DS LCD sensitivity.
+ */
 function colorDistanceSq(r1, g1, b1, r2, g2, b2) {
   const dr = r1 - r2;
   const dg = g1 - g2;
@@ -174,11 +174,173 @@ function colorDistanceSq(r1, g1, b1, r2, g2, b2) {
   return 2 * dr * dr + 4 * dg * dg + 3 * db * db;
 }
 
+const CHANNEL_WEIGHTS = { r: 2, g: 4, b: 3 }; // Same weights as colorDistanceSq
+
+// The quantizer helpers below work on unique colors: {r, g, b, key15, count},
+// where count is how many pixels have that color.
+
+function weightedMean(colors) {
+  let n = 0, r = 0, g = 0, b = 0;
+  for (const c of colors) {
+    n += c.count;
+    r += c.r * c.count;
+    g += c.g * c.count;
+    b += c.b * c.count;
+  }
+  return { r: r / n, g: g / n, b: b / n };
+}
+
+// Pixel-weighted squared distance of the colors from their mean.
+function bucketError(colors) {
+  const m = weightedMean(colors);
+  let error = 0;
+  for (const c of colors) {
+    error += c.count * colorDistanceSq(c.r, c.g, c.b, m.r, m.g, m.b);
+  }
+  return error;
+}
+
+function nearestIndex(color, centers) {
+  let nearest = 0;
+  let minDistance = Infinity;
+  for (let k = 0; k < centers.length; k++) {
+    const d = colorDistanceSq(color.r, color.g, color.b, centers[k].r, centers[k].g, centers[k].b);
+    if (d < minDistance) {
+      minDistance = d;
+      nearest = k;
+    }
+  }
+  return nearest;
+}
+
+// Splits the colors into up to maxBuckets groups. Repeatedly halves the group
+// with the largest error, at its pixel-weighted median along the channel it
+// varies most in. Splits fall between colors, never through one, so two
+// groups can't average to the same color.
+function medianCut(colors, maxBuckets) {
+  const buckets = [colors];
+  while (buckets.length < maxBuckets) {
+    let splitIndex = -1;
+    let maxError = 0;
+    buckets.forEach((bucket, i) => {
+      if (bucket.length < 2) return;
+      const error = bucketError(bucket);
+      if (error > maxError) {
+        maxError = error;
+        splitIndex = i;
+      }
+    });
+    if (splitIndex === -1) break;
+
+    const bucket = buckets[splitIndex];
+    const mean = weightedMean(bucket);
+    let channel = 'r';
+    let maxSpread = -1;
+    for (const ch of ['r', 'g', 'b']) {
+      let spread = 0;
+      for (const c of bucket) spread += c.count * (c[ch] - mean[ch]) ** 2;
+      spread *= CHANNEL_WEIGHTS[ch];
+      if (spread > maxSpread) {
+        maxSpread = spread;
+        channel = ch;
+      }
+    }
+
+    bucket.sort((a, b) => a[channel] - b[channel]);
+    const total = bucket.reduce((sum, c) => sum + c.count, 0);
+    let cut = 1;
+    let seen = 0;
+    for (let j = 0; j < bucket.length - 1; j++) {
+      seen += bucket[j].count;
+      cut = j + 1;
+      if (seen >= total / 2) break;
+    }
+    buckets.splice(splitIndex, 1, bucket.slice(0, cut), bucket.slice(cut));
+  }
+  return buckets;
+}
+
+// Lloyd's k-means over the unique colors: moves each center to the weighted
+// mean of the colors nearest to it. A center left with no colors restarts at
+// the color that is currently served worst.
+function refineCenters(colors, centers, iterations = 8) {
+  const assignment = new Int32Array(colors.length);
+  for (let it = 0; it < iterations; it++) {
+    let changed = false;
+    colors.forEach((c, j) => {
+      const k = nearestIndex(c, centers);
+      if (assignment[j] !== k) {
+        assignment[j] = k;
+        changed = true;
+      }
+    });
+
+    const groups = centers.map(() => []);
+    colors.forEach((c, j) => groups[assignment[j]].push(c));
+    groups.forEach((group, k) => {
+      centers[k] = group.length ? weightedMean(group) : null;
+    });
+
+    for (let k = 0; k < centers.length; k++) {
+      if (centers[k]) continue;
+      let worst = 0;
+      let worstError = -1;
+      colors.forEach((c, j) => {
+        const m = centers[assignment[j]];
+        const error = m ? c.count * colorDistanceSq(c.r, c.g, c.b, m.r, m.g, m.b) : 0;
+        if (error > worstError) {
+          worstError = error;
+          worst = j;
+        }
+      });
+      centers[k] = { r: colors[worst].r, g: colors[worst].g, b: colors[worst].b };
+      assignment[worst] = k;
+      changed = true;
+    }
+
+    if (!changed && it > 0) break;
+  }
+}
+
+// Snaps the centers to RGB555. A center that lands on an existing entry is
+// replaced by the color served worst by the palette so far, so every slot
+// shows a different color.
+function snapDistinct(centers, colors) {
+  const palette = [];
+  const keys = new Set();
+  for (const m of centers) {
+    const s = snapToRgb555(Math.round(m.r), Math.round(m.g), Math.round(m.b));
+    if (keys.has(s.key15)) continue;
+    keys.add(s.key15);
+    palette.push({ r: s.r, g: s.g, b: s.b });
+  }
+
+  while (palette.length < centers.length) {
+    let worst = null;
+    let worstError = -1;
+    for (const c of colors) {
+      if (keys.has(c.key15)) continue;
+      const nearest = palette[nearestIndex(c, palette)];
+      const error = c.count * colorDistanceSq(c.r, c.g, c.b, nearest.r, nearest.g, nearest.b);
+      if (error > worstError) {
+        worstError = error;
+        worst = c;
+      }
+    }
+    if (!worst) break;
+    keys.add(worst.key15);
+    palette.push({ r: worst.r, g: worst.g, b: worst.b });
+  }
+  return palette;
+}
+
 /**
- * Median-cut color quantization in native 15-bit RGB555 color space.
+ * Color quantization in native 15-bit RGB555 color space.
  * Maps low-alpha pixels to palette index 0 (transparent).
- * Quantizes remaining opaque pixels to at most 15 unique hardware colors.
- * Refines by mapping pixels to the nearest palette color using perceptual distance.
+ * Images with at most maxColors RGB555 colors keep them exactly. Otherwise a
+ * pixel-weighted median cut over the unique colors seeds maxColors centers,
+ * k-means refines them, and every opaque pixel maps to the nearest palette
+ * color by perceptual distance (after ordered dithering when enhanced).
  *
  * @param {Array<{r: number, g: number, b: number, a: number}>} pixels - 1024 pixels
  * @param {number} [maxColors=15]
@@ -210,108 +372,35 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
     return { palette: buildPalette([]), indices };
   }
 
-  // Fast path: if image already fits within maxColors unique 15-bit colors,
-  // map directly without median cut loss.
-  const uniqueColors = new Map();
-  let withinBudget = true;
+  // Unique colors with pixel counts, in first-seen order
+  const colors = [];
+  const colorsByKey = new Map();
   for (const p of opaquePixels) {
-    if (!uniqueColors.has(p.key15)) {
-      if (uniqueColors.size >= maxColors) {
-        withinBudget = false;
-        break;
-      }
-      uniqueColors.set(p.key15, { r: p.r, g: p.g, b: p.b });
+    const c = colorsByKey.get(p.key15);
+    if (c) {
+      c.count++;
+    } else {
+      const color = { r: p.r, g: p.g, b: p.b, key15: p.key15, count: 1 };
+      colorsByKey.set(p.key15, color);
+      colors.push(color);
     }
   }
 
-  if (withinBudget) {
-    const palette = buildPalette([...uniqueColors.values()]);
-    const keyToIndex = new Map();
-    for (const key15 of uniqueColors.keys()) {
-      keyToIndex.set(key15, keyToIndex.size + 1);
-    }
-
+  // Fast path: the image already fits, so map it exactly
+  if (colors.length <= maxColors) {
+    const keyToIndex = new Map(colors.map((c, k) => [c.key15, k + 1]));
     for (const p of opaquePixels) {
       indices[p.originalIndex] = keyToIndex.get(p.key15);
     }
-
-    return { palette, indices };
+    return { palette: buildPalette(colors.map(c => ({ r: c.r, g: c.g, b: c.b }))), indices };
   }
 
-  // Median cut across 15-bit color space
-  let buckets = [opaquePixels];
+  const centers = medianCut(colors, maxColors).map(weightedMean);
+  refineCenters(colors, centers);
+  const paletteColors = snapDistinct(centers, colors);
+  const palette = buildPalette(paletteColors);
 
-  while (buckets.length < maxColors) {
-    let splitBucketIndex = -1;
-    let maxRange = -1;
-    let channelToSplit = 'r';
-
-    for (let i = 0; i < buckets.length; i++) {
-      const bucket = buckets[i];
-      if (bucket.length <= 1) continue;
-
-      let minR = 255, maxR = 0;
-      let minG = 255, maxG = 0;
-      let minB = 255, maxB = 0;
-
-      for (const p of bucket) {
-        if (p.r < minR) minR = p.r;
-        if (p.r > maxR) maxR = p.r;
-        if (p.g < minG) minG = p.g;
-        if (p.g > maxG) maxG = p.g;
-        if (p.b < minB) minB = p.b;
-        if (p.b > maxB) maxB = p.b;
-      }
-
-      // Weight green channel slightly higher when selecting split channel
-      const rRange = (maxR - minR) * 1.0;
-      const gRange = (maxG - minG) * 1.2;
-      const bRange = (maxB - minB) * 0.8;
-      const localMaxRange = Math.max(rRange, gRange, bRange);
-
-      if (localMaxRange > maxRange) {
-        maxRange = localMaxRange;
-        splitBucketIndex = i;
-        if (rRange >= gRange && rRange >= bRange) {
-          channelToSplit = 'r';
-        } else if (gRange >= rRange && gRange >= bRange) {
-          channelToSplit = 'g';
-        } else {
-          channelToSplit = 'b';
-        }
-      }
-    }
-
-    if (splitBucketIndex === -1 || maxRange === 0) {
-      break;
-    }
-
-    const bucketToSplit = buckets[splitBucketIndex];
-    bucketToSplit.sort((a, b) => a[channelToSplit] - b[channelToSplit]);
-    const median = Math.floor(bucketToSplit.length / 2);
-    const part1 = bucketToSplit.slice(0, median);
-    const part2 = bucketToSplit.slice(median);
-
-    buckets.splice(splitBucketIndex, 1, part1, part2);
-  }
-
-  // Each bucket's average color, snapped to RGB555
-  const palette = buildPalette(buckets.map(bucket => {
-    let sumR = 0, sumG = 0, sumB = 0;
-    for (const p of bucket) {
-      sumR += p.r;
-      sumG += p.g;
-      sumB += p.b;
-    }
-    const snapped = snapToRgb555(
-      Math.round(sumR / bucket.length),
-      Math.round(sumG / bucket.length),
-      Math.round(sumB / bucket.length)
-    );
-    return { r: snapped.r, g: snapped.g, b: snapped.b };
-  }));
-
-  // Refine pixel mapping using perceptual distance
+  // Map every opaque pixel to its nearest palette color
   for (const p of opaquePixels) {
     let searchR = p.r, searchG = p.g, searchB = p.b;
     if (enhance) {
@@ -323,17 +412,7 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
       searchB = clamp255(p.b + threshold);
     }
 
-    let minDistance = Infinity;
-    let nearestIndex = 1;
-    for (let j = 1; j < 16; j++) {
-      const color = palette[j];
-      const dist = colorDistanceSq(searchR, searchG, searchB, color.r, color.g, color.b);
-      if (dist < minDistance) {
-        minDistance = dist;
-        nearestIndex = j;
-      }
-    }
-    indices[p.originalIndex] = nearestIndex;
+    indices[p.originalIndex] = 1 + nearestIndex({ r: searchR, g: searchG, b: searchB }, paletteColors);
   }
 
   return { palette, indices };

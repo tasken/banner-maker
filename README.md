@@ -25,7 +25,7 @@ A simple web tool to create custom icons and metadata banners (`banner.bin`) for
 - **Crop & Fit support**: Crop your image 1:1 visually or scale it to fit.
 - **Edit existing banners**: Upload an existing `banner.bin` to re-edit its icon, title, subtitle, and author.
 - **Integrity validation**: Checks the banner version and every CRC16 checksum the DS/DSi menu verifies (v1, v2, v3 and the DSi animation CRC) when importing an existing banner, and warns about anything a re-export won't keep.
-- **Native-palette quantization**: Snaps colors to the Nintendo DS 15-bit RGB555 color space with perceptual distance weighting, and previews them with standard `(v << 3) | (v >> 2)` bit expansion.
+- **Native-palette quantization**: Snaps colors to the Nintendo DS 15-bit RGB555 color space, keeps icons with 15 or fewer colors exact, and otherwise picks 15 distinct colors (weighted median cut refined with k-means) using perceptual distance weighting, and previews them with standard `(v << 3) | (v >> 2)` bit expansion.
 - **Halo-free downscaling**: Box filter weights color by alpha to prevent white outline fringe artifacts.
 - **Pixel enhance**: Optional dithering plus contrast/saturation boost so photos quantize closer to genuine pixel art.
 - **Transparency**: Preserves transparent backgrounds (rendered as hardware transparency on-console). Pixels under 50% opacity become transparent; the rest become solid in their own color, never mixed with a background, so edges don't get halos.
