@@ -6,7 +6,7 @@ A simple web tool to create custom icons and metadata banners (`banner.bin`) for
 
 ## How to use
 
-1. Drop an **icon image** onto the upload area, or drop an existing `banner.bin` to re-edit its icon and text.
+1. Drop an **icon image** onto the upload area, or drop an existing `banner.bin` file to re-edit its icon and text.
    - Images are automatically resized to 32×32 and reduced to 16 colors.
    - `.bin` files pre-fill the Title/Subtitle/Author fields and the icon straight from the file.
 2. Pick a layout mode: `Crop` to crop the image 1:1, or `Fit` to scale the whole image with padding.
@@ -24,9 +24,11 @@ A simple web tool to create custom icons and metadata banners (`banner.bin`) for
 
 - **Crop & Fit support**: Crop your image 1:1 visually or scale it to fit.
 - **Edit existing banners**: Upload an existing `banner.bin` to re-edit its icon, title, subtitle, and author.
+- **Integrity validation**: Inspects and validates CRC16 checksums upon importing existing banner files.
+- **Hardware-accurate quantization**: Snaps colors to Nintendo DS native 15-bit RGB555 color space with perceptual distance weighting and accurate `(v << 3) | (v >> 2)` bit expansion.
+- **Halo-free downscaling**: Box filter weights color by alpha to prevent white outline fringe artifacts.
 - **Pixel enhance**: Optional dithering plus contrast/saturation boost so photos quantize closer to genuine pixel art.
 - **Transparency**: Fully preserves transparent backgrounds (renders as hardware transparency on-console) and blends semi-transparent edges against white to prevent halos.
-- **Auto-quantization**: Automatically converts your image to the required 15-color palette and encodes it into 8x8 tiles (NTR v1 format).
 - **Checksums**: Automatically calculates and embeds valid CRC16 checks.
 - **No dependencies**: Built entirely using standard HTML, CSS, and vanilla JavaScript (aside from Cropper.js via CDN).
 

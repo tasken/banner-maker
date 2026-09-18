@@ -428,6 +428,27 @@ body {
   line-height: 1.4;
 }
 
+.crc-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--shape-xs);
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+.crc-badge.valid {
+  background-color: var(--success);
+  color: #ffffff;
+}
+
+.crc-badge.warning {
+  background-color: var(--warning);
+  color: #ffffff;
+}
+
 .remove-btn {
   display: flex;
   align-items: center;

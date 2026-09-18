@@ -1,15 +1,17 @@
 /**
  * Core business logic for DS Banner Maker.
  * DOM-independent pure functions for Node.js testing and Browser support.
+ * Targets Nintendo DS NTR v1 banner.bin format (2112 bytes / 0x840).
  */
 
 /**
  * GBATEK swiCRC16 algorithm.
  * @param {Uint8Array} data
+ * @param {number} [initial=0xFFFF]
  * @returns {number} 16-bit unsigned integer CRC
  */
-export function crc16(data) {
-  let crc = 0xFFFF;
+export function crc16(data, initial = 0xFFFF) {
+  let crc = initial & 0xFFFF;
   for (let i = 0; i < data.length; i++) {
     crc ^= data[i];
     for (let j = 0; j < 8; j++) {
@@ -36,6 +38,63 @@ export function stringToUtf16Le(str) {
     buf[i * 2 + 1] = (code >> 8) & 0xFF;
   }
   return buf;
+}
+
+/**
+ * Convert UTF-16LE bytes to string, terminating on first NUL code unit.
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
+export function utf16LeToString(bytes) {
+  let str = "";
+  for (let i = 0; i < bytes.length; i += 2) {
+    const code = bytes[i] | (bytes[i + 1] << 8);
+    if (code === 0) break;
+    str += String.fromCharCode(code);
+  }
+  return str.trim();
+}
+
+/**
+ * Convert 8-bit channel (0..255) to native Nintendo DS 5-bit channel (0..31).
+ * Uses half-up rounding: (v * 31 + 127) / 255.
+ * @param {number} v
+ * @returns {number} 0..31
+ */
+export function rgb8To5(v) {
+  return Math.min(31, Math.max(0, ((v * 31 + 127) / 255) | 0));
+}
+
+/**
+ * Hardware-accurate expansion of 5-bit channel (0..31) to 8-bit channel (0..255).
+ * Uses Nintendo DS GXRgba hardware bit replication: (v << 3) | (v >> 2).
+ * @param {number} v
+ * @returns {number} 0..255
+ */
+export function rgb5To8(v) {
+  return (v << 3) | (v >> 2);
+}
+
+/**
+ * Snaps 24-bit RGB values to the native Nintendo DS 15-bit RGB555 color space.
+ * @param {number} r 0..255
+ * @param {number} g 0..255
+ * @param {number} b 0..255
+ * @returns {{r: number, g: number, b: number, r5: number, g5: number, b5: number, key15: number}}
+ */
+export function snapToRgb555(r, g, b) {
+  const r5 = rgb8To5(r);
+  const g5 = rgb8To5(g);
+  const b5 = rgb8To5(b);
+  return {
+    r: rgb5To8(r5),
+    g: rgb5To8(g5),
+    b: rgb5To8(b5),
+    r5,
+    g5,
+    b5,
+    key15: r5 | (g5 << 5) | (b5 << 10)
+  };
 }
 
 function clamp255(v) {
@@ -73,17 +132,25 @@ const BAYER_4X4 = [
 const DITHER_STRENGTH = 24; // Max +/- offset applied per channel before nearest-color lookup
 
 /**
- * Median-cut color quantization.
+ * Perceptual weighted color distance squared.
+ * Uses 2*dr^2 + 4*dg^2 + 3*db^2 matching human eye and retro DS LCD sensitivity.
+ */
+function colorDistanceSq(r1, g1, b1, r2, g2, b2) {
+  const dr = r1 - r2;
+  const dg = g1 - g2;
+  const db = b1 - b2;
+  return 2 * dr * dr + 4 * dg * dg + 3 * db * db;
+}
+
+/**
+ * Median-cut color quantization in native 15-bit RGB555 color space.
  * Maps low-alpha pixels to palette index 0 (transparent).
- * Quantizes remaining opaque pixels to at most 15 colors.
- * Refines by mapping pixels to the nearest palette color.
+ * Quantizes remaining opaque pixels to at most 15 unique hardware colors.
+ * Refines by mapping pixels to the nearest palette color using perceptual distance.
  *
  * @param {Array<{r: number, g: number, b: number, a: number}>} pixels - 1024 pixels
  * @param {number} [maxColors=15]
- * @param {boolean} [enhance=false] - Boosts contrast/saturation before quantizing and
- *   applies ordered dithering during palette assignment, so busy source images (photos,
- *   gradients) read closer to hand-drawn pixel art instead of flat/muddy blends. Has no
- *   effect on images that already fit within maxColors unique colors.
+ * @param {boolean} [enhance=false] - Boosts contrast/saturation and applies ordered dithering.
  * @returns {{palette: Array<{r: number, g: number, b: number}>, indices: Uint8Array}}
  */
 export function quantize(pixels, maxColors = 15, enhance = false) {
@@ -94,10 +161,13 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
     const p = pixels[i];
     if (p.a >= 128) {
       const color = enhance ? boostPixelArtColor(p.r, p.g, p.b) : p;
+      // Snap to native RGB555 hardware space so colors that collapse on DS aren't duplicated
+      const snapped = snapToRgb555(color.r, color.g, color.b);
       opaquePixels.push({
-        r: color.r,
-        g: color.g,
-        b: color.b,
+        r: snapped.r,
+        g: snapped.g,
+        b: snapped.b,
+        key15: snapped.key15,
         originalIndex: i
       });
     }
@@ -112,26 +182,25 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
     return { palette, indices };
   }
 
-  // Fast path: if the image already uses at most maxColors unique colors,
-  // map them directly instead of quantizing, so no colors are blended/lost.
+  // Fast path: if image already fits within maxColors unique 15-bit colors,
+  // map directly without median cut loss.
   const uniqueColors = new Map();
   let withinBudget = true;
   for (const p of opaquePixels) {
-    const key = (p.r << 16) | (p.g << 8) | p.b;
-    if (!uniqueColors.has(key)) {
+    if (!uniqueColors.has(p.key15)) {
       if (uniqueColors.size >= maxColors) {
         withinBudget = false;
         break;
       }
-      uniqueColors.set(key, { r: p.r, g: p.g, b: p.b });
+      uniqueColors.set(p.key15, { r: p.r, g: p.g, b: p.b });
     }
   }
 
   if (withinBudget) {
-    const palette = [{ r: 255, g: 0, b: 255 }];
+    const palette = [{ r: 255, g: 0, b: 255 }]; // index 0 transparent
     const keyToIndex = new Map();
-    for (const [key, color] of uniqueColors) {
-      keyToIndex.set(key, palette.length);
+    for (const [key15, color] of uniqueColors) {
+      keyToIndex.set(key15, palette.length);
       palette.push(color);
     }
     while (palette.length < 16) {
@@ -139,14 +208,13 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
     }
 
     for (const p of opaquePixels) {
-      const key = (p.r << 16) | (p.g << 8) | p.b;
-      indices[p.originalIndex] = keyToIndex.get(key);
+      indices[p.originalIndex] = keyToIndex.get(p.key15);
     }
 
     return { palette, indices };
   }
 
-  // Median cut (only reached when the image has more than maxColors unique colors)
+  // Median cut across 15-bit color space
   let buckets = [opaquePixels];
 
   while (buckets.length < maxColors) {
@@ -171,9 +239,10 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
         if (p.b > maxB) maxB = p.b;
       }
 
-      const rRange = maxR - minR;
-      const gRange = maxG - minG;
-      const bRange = maxB - minB;
+      // Weight green channel slightly higher when selecting split channel
+      const rRange = (maxR - minR) * 1.0;
+      const gRange = (maxG - minG) * 1.2;
+      const bRange = (maxB - minB) * 0.8;
       const localMaxRange = Math.max(rRange, gRange, bRange);
 
       if (localMaxRange > maxRange) {
@@ -202,7 +271,7 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
     buckets.splice(splitBucketIndex, 1, part1, part2);
   }
 
-  // Build the palette (index 0 is transparent magenta)
+  // Build the palette (index 0 is transparent magenta), snapping averages to RGB555
   const palette = [{ r: 255, g: 0, b: 255 }];
   for (let i = 0; i < buckets.length; i++) {
     const bucket = buckets[i];
@@ -212,11 +281,11 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
       sumG += p.g;
       sumB += p.b;
     }
-    palette.push({
-      r: Math.round(sumR / bucket.length),
-      g: Math.round(sumG / bucket.length),
-      b: Math.round(sumB / bucket.length)
-    });
+    const avgR = Math.round(sumR / bucket.length);
+    const avgG = Math.round(sumG / bucket.length);
+    const avgB = Math.round(sumB / bucket.length);
+    const snapped = snapToRgb555(avgR, avgG, avgB);
+    palette.push({ r: snapped.r, g: snapped.g, b: snapped.b });
   }
 
   // Pad palette to 16 colors
@@ -224,9 +293,7 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
     palette.push({ r: 0, g: 0, b: 0 });
   }
 
-  // Refine pixel mapping: Map each opaque pixel to the nearest palette color (indices 1..15).
-  // With enhance on, nudge each pixel's color by an ordered-dither offset first, so runs of
-  // similar colors alternate between two nearby palette entries instead of flattening to one.
+  // Refine pixel mapping using perceptual distance
   for (const p of opaquePixels) {
     let searchR = p.r, searchG = p.g, searchB = p.b;
     if (enhance) {
@@ -242,10 +309,7 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
     let nearestIndex = 1;
     for (let j = 1; j < 16; j++) {
       const color = palette[j];
-      const dr = searchR - color.r;
-      const dg = searchG - color.g;
-      const db = searchB - color.b;
-      const dist = dr * dr + dg * dg + db * db;
+      const dist = colorDistanceSq(searchR, searchG, searchB, color.r, color.g, color.b);
       if (dist < minDistance) {
         minDistance = dist;
         nearestIndex = j;
@@ -284,7 +348,35 @@ export function tileEncode(indices) {
 }
 
 /**
+ * Unpacks a tile-encoded 4bpp bitmap (512 bytes) into 32x32 pixel indices.
+ * @param {Uint8Array} bitmap - 512 bytes
+ * @returns {Uint8Array} 1024 pixel indices (0..15)
+ */
+export function tileDecode(bitmap) {
+  const indices = new Uint8Array(1024);
+  let byteIndex = 0;
+  for (let tileRow = 0; tileRow < 4; tileRow++) {
+    for (let tileCol = 0; tileCol < 4; tileCol++) {
+      for (let pixelRow = 0; pixelRow < 8; pixelRow++) {
+        const y = tileRow * 8 + pixelRow;
+        for (let pixelCol = 0; pixelCol < 8; pixelCol += 2) {
+          const byteVal = bitmap[byteIndex++];
+          const idx1 = byteVal & 0x0F;
+          const idx2 = (byteVal >> 4) & 0x0F;
+          const x1 = tileCol * 8 + pixelCol;
+          const x2 = x1 + 1;
+          indices[y * 32 + x1] = idx1;
+          indices[y * 32 + x2] = idx2;
+        }
+      }
+    }
+  }
+  return indices;
+}
+
+/**
  * Converts an RGB palette to 16 little-endian RGB555 values (32 bytes).
+ * Uses hardware-accurate 5-bit conversion.
  * @param {Array<{r: number, g: number, b: number}>} palette
  * @returns {Uint8Array} 32 bytes
  */
@@ -292,9 +384,9 @@ export function paletteToRgb555(palette) {
   const bytes = new Uint8Array(32);
   for (let i = 0; i < 16; i++) {
     const color = palette[i] || { r: 0, g: 0, b: 0 };
-    const r5 = Math.round((color.r * 31) / 255);
-    const g5 = Math.round((color.g * 31) / 255);
-    const b5 = Math.round((color.b * 31) / 255);
+    const r5 = rgb8To5(color.r);
+    const g5 = rgb8To5(color.g);
+    const b5 = rgb8To5(color.b);
     const val = r5 | (g5 << 5) | (b5 << 10);
     bytes[i * 2] = val & 0xFF;
     bytes[i * 2 + 1] = (val >> 8) & 0xFF;
@@ -303,14 +395,38 @@ export function paletteToRgb555(palette) {
 }
 
 /**
- * Assembles a complete banner.bin structure (2112 bytes) with updated CRCs.
+ * Converts 16 little-endian RGB555 values (32 bytes) to an RGB palette.
+ * Uses hardware-accurate bit replication for 5-bit to 8-bit expansion.
+ * @param {Uint8Array} bytes - 32 bytes
+ * @returns {Array<{r: number, g: number, b: number}>} 16 RGB colors
+ */
+export function rgb555ToPalette(bytes) {
+  const palette = [];
+  for (let i = 0; i < 16; i++) {
+    const offset = i * 2;
+    const val = bytes[offset] | (bytes[offset + 1] << 8);
+    const r5 = val & 0x1F;
+    const g5 = (val >> 5) & 0x1F;
+    const b5 = (val >> 10) & 0x1F;
+    palette.push({
+      r: rgb5To8(r5),
+      g: rgb5To8(g5),
+      b: rgb5To8(b5)
+    });
+  }
+  return palette;
+}
+
+/**
+ * Assembles a complete NTR v1 banner.bin structure (2112 bytes / 0x840).
+ * Replicates the Title, Subtitle, and Author metadata across all 6 system menu language slots.
  *
  * @param {Array<{r: number, g: number, b: number, a: number}>} pixels - 32x32 RGBA pixels
  * @param {string} title
  * @param {string} subtitle
  * @param {string} author
- * @param {boolean} [enhance=false] - See quantize()'s enhance param.
- * @returns {Uint8Array} The packed banner.bin data
+ * @param {boolean} [enhance=false] - Optional contrast and dither enhancement
+ * @returns {Uint8Array} The packed 2112-byte banner.bin
  */
 export function packBanner(pixels, title, subtitle, author, enhance = false) {
   const banner = new Uint8Array(2112); // Exactly 0x840 bytes
@@ -324,7 +440,7 @@ export function packBanner(pixels, title, subtitle, author, enhance = false) {
   const iconBitmap = tileEncode(indices);
   const iconPalette = paletteToRgb555(palette);
 
-  // 3. Write legacy/static icon (offset 0x20)
+  // 3. Write icon at offset 0x20
   banner.set(iconBitmap, 0x20);
   banner.set(iconPalette, 0x220);
 
@@ -341,12 +457,12 @@ export function packBanner(pixels, title, subtitle, author, enhance = false) {
 
   // Replicate into language slots 0..5 (each slot 256 bytes)
   const titleBlock = new Uint8Array(256);
-  titleBlock.set(titleBytes.subarray(0, 254)); // Ensure NUL termination space
+  titleBlock.set(titleBytes.subarray(0, 254)); // Ensure 2 bytes NUL termination space
   for (let i = 0; i < 6; i++) {
     banner.set(titleBlock, 0x240 + i * 256);
   }
 
-  // 5. Compute version1Crc: CRC over [0x20, 0x840)
+  // 5. Compute version1Crc: CRC16 over [0x20, 0x840)
   const v1CrcVal = crc16(banner.subarray(0x20, 0x840));
   banner[0x02] = v1CrcVal & 0xFF;
   banner[0x03] = (v1CrcVal >> 8) & 0xFF;
@@ -356,7 +472,7 @@ export function packBanner(pixels, title, subtitle, author, enhance = false) {
 
 /**
  * Area-averaging (box-filter) downscaler to resize a square image to 32x32.
- * Accounts for fractional pixel overlaps to prevent aliasing.
+ * Preserves anti-aliased edge colors without baking in a white halo outline.
  *
  * @param {Uint8ClampedArray} srcData - Raw RGBA source pixel data
  * @param {number} srcSize - Width/Height of the square source image
@@ -381,6 +497,7 @@ export function downscaleBox(srcData, srcSize) {
 
       let sumR = 0, sumG = 0, sumB = 0, sumA = 0;
       let sumWeight = 0;
+      let sumAlphaWeight = 0;
 
       for (let sy = syStart; sy < syEnd; sy++) {
         if (sy < 0 || sy >= srcSize) continue;
@@ -389,35 +506,30 @@ export function downscaleBox(srcData, srcSize) {
         for (let sx = sxStart; sx < sxEnd; sx++) {
           if (sx < 0 || sx >= srcSize) continue;
           const overlapX = Math.min(sx + 1, xEnd) - Math.max(sx, xStart);
-          
           const weight = overlapX * overlapY;
           const srcIdx = (sy * srcSize + sx) * 4;
 
           const srcA = srcData[srcIdx + 3];
-          let r = 255, g = 255, b = 255, a = 0;
-          
           if (srcA > 0) {
-            // Semi-transparent or fully opaque: Alpha blend the source pixel with a solid white background
-            const alpha = srcA / 255;
-            r = srcData[srcIdx] * alpha + 255 * (1 - alpha);
-            g = srcData[srcIdx + 1] * alpha + 255 * (1 - alpha);
-            b = srcData[srcIdx + 2] * alpha + 255 * (1 - alpha);
-            a = srcA;
+            // Weight color contribution by both area overlap and pixel alpha
+            const alphaWeight = weight * (srcA / 255);
+            sumR += srcData[srcIdx] * alphaWeight;
+            sumG += srcData[srcIdx + 1] * alphaWeight;
+            sumB += srcData[srcIdx + 2] * alphaWeight;
+            sumA += srcA * weight;
+            sumAlphaWeight += alphaWeight;
           }
-
-          sumR += r * weight;
-          sumG += g * weight;
-          sumB += b * weight;
-          sumA += a * weight;
           sumWeight += weight;
         }
       }
 
+      const avgA = sumWeight > 0 ? Math.round(sumA / sumWeight) : 0;
+
       destPixels.push({
-        r: sumWeight > 0 ? Math.round(sumR / sumWeight) : 255,
-        g: sumWeight > 0 ? Math.round(sumG / sumWeight) : 255,
-        b: sumWeight > 0 ? Math.round(sumB / sumWeight) : 255,
-        a: sumWeight > 0 ? Math.round(sumA / sumWeight) : 0
+        r: sumAlphaWeight > 0 ? Math.round(sumR / sumAlphaWeight) : 0,
+        g: sumAlphaWeight > 0 ? Math.round(sumG / sumAlphaWeight) : 0,
+        b: sumAlphaWeight > 0 ? Math.round(sumB / sumAlphaWeight) : 0,
+        a: avgA
       });
     }
   }
@@ -431,46 +543,25 @@ export function downscaleBox(srcData, srcSize) {
  * - Title string
  * - Subtitle string
  * - Author string
+ * - CRC validity check
  *
  * @param {Uint8Array} bannerBytes
- * @returns {{pixels: Array<{r: number, g: number, b: number, a: number}>, title: string, subtitle: string, author: string}}
+ * @returns {{
+ *   pixels: Array<{r: number, g: number, b: number, a: number}>,
+ *   title: string,
+ *   subtitle: string,
+ *   author: string,
+ *   crcValid: boolean,
+ *   calculatedCrc: number,
+ *   embeddedCrc: number
+ * }}
  */
 export function decodeBanner(bannerBytes) {
-  // 1. Decode palette (32 bytes at offset 0x220)
-  const palette = [];
-  for (let i = 0; i < 16; i++) {
-    const offset = 0x220 + i * 2;
-    const val = bannerBytes[offset] | (bannerBytes[offset + 1] << 8);
-    const r5 = val & 0x1F;
-    const g5 = (val >> 5) & 0x1F;
-    const b5 = (val >> 10) & 0x1F;
-    // Map 5-bit channel (0..31) to 8-bit channel (0..255)
-    const r = Math.round((r5 * 255) / 31);
-    const g = Math.round((g5 * 255) / 31);
-    const b = Math.round((b5 * 255) / 31);
-    palette.push({ r, g, b });
-  }
+  // 1. Decode palette (32 bytes at offset 0x220) using hardware-accurate bit expansion
+  const palette = rgb555ToPalette(bannerBytes.subarray(0x220, 0x240));
 
   // 2. Decode tile-encoded indices (512 bytes at offset 0x20)
-  const bitmap = bannerBytes.subarray(0x20, 0x220);
-  const indices = new Uint8Array(1024);
-  let byteIndex = 0;
-  for (let tileRow = 0; tileRow < 4; tileRow++) {
-    for (let tileCol = 0; tileCol < 4; tileCol++) {
-      for (let pixelRow = 0; pixelRow < 8; pixelRow++) {
-        const y = tileRow * 8 + pixelRow;
-        for (let pixelCol = 0; pixelCol < 8; pixelCol += 2) {
-          const byteVal = bitmap[byteIndex++];
-          const idx1 = byteVal & 0x0F;
-          const idx2 = (byteVal >> 4) & 0x0F;
-          const x1 = tileCol * 8 + pixelCol;
-          const x2 = x1 + 1;
-          indices[y * 32 + x1] = idx1;
-          indices[y * 32 + x2] = idx2;
-        }
-      }
-    }
-  }
+  const indices = tileDecode(bannerBytes.subarray(0x20, 0x220));
 
   // 3. Map indices to pixels (RGBA)
   const pixels = [];
@@ -478,32 +569,20 @@ export function decodeBanner(bannerBytes) {
     const idx = indices[i];
     const color = palette[idx];
     if (idx === 0) {
-      // Index 0 is transparent hardware color
+      // Index 0 is hardware transparency
       pixels.push({ r: 0, g: 0, b: 0, a: 0 });
     } else {
       pixels.push({ r: color.r, g: color.g, b: color.b, a: 255 });
     }
   }
 
-  // Helper to decode a 256-byte UTF-16LE block to a string
-  function decodeUtf16Le(bytes) {
-    let str = "";
-    for (let i = 0; i < bytes.length; i += 2) {
-      const code = bytes[i] | (bytes[i + 1] << 8);
-      if (code === 0) break; // NUL terminator
-      str += String.fromCharCode(code);
-    }
-    return str.trim();
-  }
-
-  // 4. Decode titles. We try English (Language slot 1) first, then Japanese (slot 0),
-  // then other standard NTR slots: French (2), German (3), Italian (4), Spanish (5).
+  // 4. Decode titles. Check English first (slot 1), then Japanese (slot 0), then others
   let titleString = "";
   const searchOrder = [1, 0, 2, 3, 4, 5];
   for (const langIdx of searchOrder) {
     const offset = 0x240 + langIdx * 256;
     if (offset + 256 <= bannerBytes.length) {
-      const str = decodeUtf16Le(bannerBytes.subarray(offset, offset + 256));
+      const str = utf16LeToString(bannerBytes.subarray(offset, offset + 256));
       if (str) {
         titleString = str;
         break;
@@ -511,12 +590,11 @@ export function decodeBanner(bannerBytes) {
     }
   }
 
-  // Fallback to check extra slots if they exist (Chinese = 6, Korean = 7, etc.)
   if (!titleString) {
     for (let langIdx = 6; langIdx < 16; langIdx++) {
       const offset = 0x240 + langIdx * 256;
       if (offset + 256 <= bannerBytes.length) {
-        const str = decodeUtf16Le(bannerBytes.subarray(offset, offset + 256));
+        const str = utf16LeToString(bannerBytes.subarray(offset, offset + 256));
         if (str) {
           titleString = str;
           break;
@@ -531,6 +609,136 @@ export function decodeBanner(bannerBytes) {
   const subtitle = lines[1] ? lines[1].trim() : "";
   const author = lines.slice(2).join('\n') ? lines.slice(2).join('\n').trim() : "";
 
-  return { pixels, title, subtitle, author };
+  // 5. Checksum verification
+  const calculatedCrc = crc16(bannerBytes.subarray(0x20, 0x840));
+  const embeddedCrc = bannerBytes[2] | (bannerBytes[3] << 8);
+  const crcValid = (calculatedCrc === embeddedCrc);
+
+  return { pixels, title, subtitle, author, crcValid, calculatedCrc, embeddedCrc };
 }
 
+/**
+ * Generates a Banner Spec File (.bsf) in UTF-16LE format with BOM.
+ * Compatible with SDK makebanner and devkitPro ndstool.
+ *
+ * @param {string} title
+ * @param {string} subtitle
+ * @param {string} author
+ * @returns {Uint8Array} UTF-16LE bytes with BOM
+ */
+export function generateBsf(title = "", subtitle = "", author = "") {
+  const lines = [
+    "#BSF --- Banner Spec File",
+    "#---------------------------------------------------------",
+    "# This file must be written in charset UTF-16LE",
+    "#---------------------------------------------------------",
+    "",
+    "Version:\t1",
+    ""
+  ];
+
+  const tags = ['JP', 'EN', 'FR', 'GE', 'IT', 'SP'];
+  const t = title.trim();
+  const s = subtitle.trim();
+  const a = author.trim();
+
+  for (const tag of tags) {
+    if (t || s || a) {
+      lines.push(`${tag}:\t${t}`);
+      if (s || a) lines.push(`\t${s}`);
+      if (a) lines.push(`\t${a}`);
+    } else {
+      lines.push(`${tag}:\t`);
+    }
+    lines.push("");
+  }
+
+  const text = lines.join('\r\n');
+  const textBytes = stringToUtf16Le(text);
+  const out = new Uint8Array(2 + textBytes.length);
+  out[0] = 0xFF; // BOM
+  out[1] = 0xFE;
+  out.set(textBytes, 2);
+  return out;
+}
+
+/**
+ * Parses a Banner Spec File (.bsf) in UTF-16LE or string format into Title, Subtitle, Author.
+ *
+ * @param {Uint8Array|string} content
+ * @returns {{title: string, subtitle: string, author: string}}
+ */
+export function parseBsf(content) {
+  let text = "";
+  if (typeof content === 'string') {
+    text = content;
+  } else if (content instanceof Uint8Array || (content && content.buffer)) {
+    const bytes = content instanceof Uint8Array ? content : new Uint8Array(content);
+    if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+      text = new TextDecoder('utf-16le').decode(bytes.subarray(2));
+    } else if (bytes.length >= 2 && bytes[1] === 0x00) {
+      text = new TextDecoder('utf-16le').decode(bytes);
+    } else {
+      text = new TextDecoder('utf-8').decode(bytes);
+    }
+  }
+
+  const lines = text.split(/\r?\n/);
+  let title = "";
+  let subtitle = "";
+  let author = "";
+
+  const langOrder = ['en', 'jp', 'fr', 'ge', 'it', 'sp'];
+  const dataByLang = {};
+
+  let currentLang = null;
+  let currentField = 0;
+
+  for (let rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const langMatch = trimmed.match(/^([A-Za-z]{2})\s*:\s*(.*)$/);
+    if (langMatch) {
+      currentLang = langMatch[1].toLowerCase();
+      currentField = 0;
+      if (!dataByLang[currentLang]) dataByLang[currentLang] = [];
+      const remainder = langMatch[2].trim().replace(/^"|"$/g, '');
+      if (remainder) {
+        dataByLang[currentLang].push(remainder);
+        currentField = 1;
+      }
+      continue;
+    }
+
+    if (currentLang && currentField < 3) {
+      const clean = trimmed.replace(/^"|"$/g, '');
+      dataByLang[currentLang].push(clean);
+      currentField++;
+    }
+  }
+
+  // Find first populated language
+  for (const l of langOrder) {
+    if (dataByLang[l] && dataByLang[l].length > 0) {
+      title = dataByLang[l][0] || "";
+      subtitle = dataByLang[l][1] || "";
+      author = dataByLang[l][2] || "";
+      break;
+    }
+  }
+
+  // Fallback if not in standard list
+  if (!title) {
+    for (const l of Object.keys(dataByLang)) {
+      if (dataByLang[l] && dataByLang[l].length > 0) {
+        title = dataByLang[l][0] || "";
+        subtitle = dataByLang[l][1] || "";
+        author = dataByLang[l][2] || "";
+        break;
+      }
+    }
+  }
+
+  return { title, subtitle, author };
+}

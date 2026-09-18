@@ -430,7 +430,12 @@ function handleBinSelect(file) {
         binPreviewSlot.appendChild(cropPreviewCanvas);
         cropPreviewCanvas.classList.remove('hidden');
 
-        binLoadedText.innerHTML = `Editing existing <code>banner.bin</code>: icon, title & text imported from "${escapeHtml(file.name)}".`;
+        const crcHex = `0x${parsed.calculatedCrc.toString(16).toUpperCase().padStart(4, '0')}`;
+        const crcBadge = parsed.crcValid
+          ? `<span class="crc-badge valid" title="CRC16 checksum matches specification">CRC OK (${crcHex})</span>`
+          : `<span class="crc-badge warning" title="Stored CRC was 0x${parsed.embeddedCrc.toString(16).toUpperCase().padStart(4, '0')}">CRC Mismatch (fixed on export)</span>`;
+
+        binLoadedText.innerHTML = `Editing existing <code>banner.bin</code>: icon, title & text imported from "${escapeHtml(file.name)}" ${crcBadge}.`;
         binLoadedInfo.classList.remove('hidden');
 
         // Process image to populate currentPixels and trigger updateBannerData
