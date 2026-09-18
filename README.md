@@ -7,12 +7,12 @@ A simple web tool to create custom icons and metadata banners (`banner.bin`) for
 ## How to use
 
 1. Drop an **icon image** onto the upload area, or drop an existing `banner.bin` file to re-edit its icon and text.
-   - Images are automatically resized to 32×32 and reduced to 16 colors.
+   - Images are automatically resized to 32×32 and reduced to 16 colors, with the first one transparent. A 32×32 PNG with a 16-color palette is used as-is, so the color at index 0 becomes transparent.
    - `.bin` files pre-fill the Title/Subtitle/Author fields and the icon straight from the file. Any version works (NTR v1–v3 and DSi animated), but downloads are always static NTR v1 banners, so Chinese/Korean titles and DSi icon animations aren't kept.
 2. Pick a layout mode: `Crop` to crop the image 1:1, or `Fit` to scale the whole image with padding.
 3. Optionally turn on `Pixel enhance` to dither colors and boost contrast/saturation, so busy photos quantize down closer to hand-drawn pixel art instead of a muddy blur.
 4. Fill in the **Game title**, and optionally a **Subtitle** and **Author**.
-5. Click `Download banner.bin`, then replace the file in your homebrew project's source before compiling.
+5. Click `Download banner.bin`, then replace the file in your homebrew project's source before compiling, or flash it to a flashcart by following the [flashcart banner guide](https://sanrax.github.io/flashcart-guides/tutorials/icon-change/). Stock DSi and 3DS consoles block carts with a changed banner.
 
 > [!TIP]
 > Uploading a new image or `.bin` replaces whatever is currently loaded. If you imported a `banner.bin` and want to start from a blank slate instead, use the `Remove` button next to it.

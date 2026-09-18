@@ -536,6 +536,15 @@ body {
   margin-top: var(--space-sm);
 }
 
+.flashcart-note {
+  margin-top: var(--space-sm);
+}
+
+.help-text a {
+  color: var(--violet);
+  text-decoration: underline;
+}
+
 /* Cropper.js overrides */
 .cropper-view-box {
   outline: 1.5px solid var(--violet);
@@ -927,6 +936,7 @@ body {
   font-size: 0.78rem;
   color: var(--success-text);
   line-height: 1.45;
+  text-align: center;
   text-wrap: balance;
 }
 

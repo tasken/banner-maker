@@ -261,7 +261,7 @@ function crcBadgeHtml(crcChecks) {
     return `<span class="crc-badge valid" title="All checksums match (${values})">CRC OK</span>`;
   }
   const details = failed.map(c => `${c.name}: stored ${formatHex(c.embedded)}, expected ${formatHex(c.calculated)}`).join('; ');
-  return `<span class="crc-badge warning" title="${details}. The DSi menu hides banners with a wrong checksum. Downloading writes a correct one.">CRC mismatch (fixed on export)</span>`;
+  return `<span class="crc-badge warning" title="${details}. The DSi menu hides banners with a wrong checksum. Downloading writes a correct one.">CRC mismatch (fixed when you download)</span>`;
 }
 
 // Downloads are always static NTR v1 banners, so name what won't carry over.
@@ -272,7 +272,7 @@ function exportLossHtml(lostOnExport) {
   if (lostOnExport.animation) lost.push('the icon animation');
   if (lost.length === 0) return '';
   const list = lost.length === 1 ? lost[0] : `${lost.slice(0, -1).join(', ')} and ${lost[lost.length - 1]}`;
-  return `<br>Downloads as a static NTR v1 banner, so ${list} won't be kept.`;
+  return `<br>Downloads as a static NTR v1 banner, the kind flashcarts have room for, so ${list} won't be kept.`;
 }
 
 function createCanvas(width, height) {
@@ -364,7 +364,7 @@ function handleFileSelect() {
       initCropper();
     };
     img.onerror = function() {
-      showError("Failed to open the image. Please verify it is a valid PNG, JPG, or WebP graphic.");
+      showError("This image couldn't be opened. Try a PNG, JPG or WebP file.");
       unloadImage();
     };
     img.src = event.target.result;
@@ -428,14 +428,14 @@ function handleBinSelect(file) {
       };
 
       img.onerror = function() {
-        showError("Failed to convert binary banner icon to editable image.");
+        showError("The banner's icon couldn't be loaded. Try the file again, or upload a different <code>banner.bin</code>.");
       };
 
       img.src = dataURL;
 
     } catch (err) {
       console.error(err);
-      showError("Failed to parse the <code>banner.bin</code> file. Make sure it is a valid Nintendo DS banner.");
+      showError("This <code>banner.bin</code> couldn't be read. It may be damaged. Upload a different file.");
     }
   };
   reader.readAsArrayBuffer(file);

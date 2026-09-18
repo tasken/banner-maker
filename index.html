@@ -27,13 +27,13 @@
       <div class="header-main-row">
         <h1>DS banner maker</h1>
         <div class="theme-selector" role="group" aria-label="Theme selection">
-          <button type="button" id="btn-theme-light" class="theme-btn" aria-label="Light Theme">
+          <button type="button" id="btn-theme-light" class="theme-btn" aria-label="Light theme">
             <span class="material-symbols-outlined">light_mode</span>
           </button>
-          <button type="button" id="btn-theme-system" class="theme-btn active" aria-label="System Theme">
+          <button type="button" id="btn-theme-system" class="theme-btn active" aria-label="System theme">
             <span class="material-symbols-outlined">desktop_windows</span>
           </button>
-          <button type="button" id="btn-theme-dark" class="theme-btn" aria-label="Dark Theme">
+          <button type="button" id="btn-theme-dark" class="theme-btn" aria-label="Dark theme">
             <span class="material-symbols-outlined">dark_mode</span>
           </button>
         </div>
@@ -47,10 +47,10 @@
         <span class="info-card-title">Icon specs</span>
       </div>
       <p class="info-card-text">
-        DS icons are <strong>32 × 32 px</strong> with only <strong>16 colors</strong>.
-        Color at index 0 is reserved for transparency.
-        This tool downscales and quantizes any image automatically, but starting with a
-        matching image gives sharper results.
+        DS icons are <strong>32 × 32 px</strong> with only <strong>16 colors</strong>,
+        and the first color is transparent.
+        This tool shrinks any image and reduces its colors for you, but starting with a
+        matching image gives sharper results. A 32 × 32 PNG with a 16-color palette is used as-is.
       </p>
     </div>
 
@@ -62,7 +62,7 @@
           <input type="file" id="file-input" accept="image/*,.bin" tabindex="-1">
           <div class="dropzone-content">
             <span class="material-symbols-outlined upload-icon">cloud_upload</span>
-            <p id="dropzone-prompt" class="dropzone-text">Click or drop an <strong class="highlight">icon image</strong> or <strong class="highlight">banner.bin</strong> here</p>
+            <p id="dropzone-prompt" class="dropzone-text">Choose or drop an <strong class="highlight">icon image</strong> or <strong class="highlight">banner.bin</strong> here</p>
             <div id="dropzone-preview-wrapper" class="dropzone-preview-wrapper">
               <canvas id="crop-preview-canvas" width="96" height="96" class="dropzone-preview hidden"></canvas>
               <p id="dropzone-filename" class="dropzone-filename hidden"></p>
@@ -79,7 +79,7 @@
           </button>
         </div>
 
-        <p class="upload-tip">Tip: Upload an image to auto-downscale and quantize it, or an existing <code>banner.bin</code> to extract and edit its icon and metadata. Uploading a new file replaces what's currently loaded.</p>
+        <p class="upload-tip">Tip: Upload an image to turn it into an icon, or an existing <code>banner.bin</code> to edit its icon and text. A new upload replaces the current one.</p>
         <p id="palette-note" class="upload-tip hidden" role="status">Using your image's own palette: its first color is transparent.</p>
 
         <div id="error-box" class="message-card error-card hidden" role="alert">
@@ -91,8 +91,8 @@
           <div class="label-row">
             <span class="crop-label">Layout mode</span>
             <div class="pill-group">
-              <button type="button" id="btn-mode-crop" class="pill-btn active" aria-label="Crop image 1:1 visually">Crop</button>
-              <button type="button" id="btn-mode-fit" class="pill-btn" aria-label="Fit entire image with white background padding">Fit</button>
+              <button type="button" id="btn-mode-crop" class="pill-btn active" aria-label="Crop a square from the image">Crop</button>
+              <button type="button" id="btn-mode-fit" class="pill-btn" aria-label="Fit the whole image, with transparent padding">Fit</button>
             </div>
           </div>
           
@@ -108,11 +108,11 @@
       <!-- Transparency Handling Info Card -->
       <div id="transparency-info" class="message-card info-card hidden" role="note">
         <div class="info-card-header">
-          <span class="info-card-title">Transparency Detected</span>
+          <span class="info-card-title">Transparency detected</span>
         </div>
         <p class="info-card-text">
           Your icon has transparent pixels:
-          <br>&bull; Pixels <strong>under 50% opacity</strong> map to palette index 0, rendered as true hardware transparency on&nbsp;DS.
+          <br>&bull; Pixels <strong>under 50% opacity</strong> become transparent on the&nbsp;console.
           <br>&bull; Pixels <strong>at 50% opacity or more</strong> become solid in their own color. Colors aren't mixed with a background, so edges don't get a light or dark&nbsp;halo.
         </p>
       </div>
@@ -125,7 +125,7 @@
           <div class="input-group">
             <div class="label-row">
               <label for="input-title">Game title</label>
-              <span class="tooltip-trigger" tabindex="0" data-tip="The main game name shown in bold. Keep it under 28 characters to avoid&nbsp;clipping." aria-label="Game title help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+              <span class="tooltip-trigger" tabindex="0" data-tip="The game's name, shown on the first line. Keep it under 28 characters to avoid&nbsp;clipping." aria-label="Game title help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
             </div>
             <input type="text" id="input-title" maxlength="40" placeholder="e.g. Space Raiders" autocomplete="off">
           </div>
@@ -133,7 +133,7 @@
           <div class="input-group">
             <div class="label-row">
               <label for="input-subtitle">Subtitle <span class="optional">(optional)</span></label>
-              <span class="tooltip-trigger" tabindex="0" data-tip="Additional lines of text, such as version numbers, release dates, or&nbsp;translators." aria-label="Subtitle help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+              <span class="tooltip-trigger" tabindex="0" data-tip="A second line, such as a version number, release date, or&nbsp;translator." aria-label="Subtitle help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
             </div>
             <input type="text" id="input-subtitle" maxlength="45" placeholder="e.g. Version 1.0" autocomplete="off">
           </div>
@@ -151,8 +151,8 @@
               <span id="pixel-enhance-label" class="field-label">Pixel enhance</span>
               <div class="inline-controls">
                 <div class="pill-group" role="group" aria-labelledby="pixel-enhance-label">
-                  <button type="button" id="btn-pixelart-off" class="pill-btn active" aria-label="Disable pixel enhance">Off</button>
-                  <button type="button" id="btn-pixelart-on" class="pill-btn" aria-label="Enable pixel enhance">On</button>
+                  <button type="button" id="btn-pixelart-off" class="pill-btn active">Off</button>
+                  <button type="button" id="btn-pixelart-on" class="pill-btn">On</button>
                 </div>
                 <span class="tooltip-trigger" tabindex="0" data-tip="Dithers colors and boosts contrast/saturation so busy photos read closer to hand-drawn pixel art. Best for photos; leave off for already-clean pixel art." aria-label="Pixel enhance help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
               </div>
@@ -166,8 +166,8 @@
         <div class="step-title-row">
           <h2 class="step-title">Preview</h2>
           <div class="pill-group">
-            <button type="button" id="btn-scale-1x" class="pill-btn active" aria-label="1 times scale">1×</button>
-            <button type="button" id="btn-scale-2x" class="pill-btn" aria-label="2 times scale">2×</button>
+            <button type="button" id="btn-scale-1x" class="pill-btn active" aria-label="1× actual size">1×</button>
+            <button type="button" id="btn-scale-2x" class="pill-btn" aria-label="2× double size">2×</button>
           </div>
         </div>
 
@@ -181,14 +181,14 @@
             
             <div class="ds-text-slot">
               <div id="mock-title" class="mock-title">Untitled game</div>
-              <div id="mock-subtitle" class="mock-subtitle">No subtitle</div>
-              <div id="mock-author" class="mock-author">No author</div>
+              <div id="mock-subtitle" class="mock-subtitle"></div>
+              <div id="mock-author" class="mock-author"></div>
             </div>
           </div>
         </div>
         
         <p class="help-text">
-          Your image is automatically resized to 32×32 and reduced to 16 colors.
+          Your image is automatically resized to 32×32 and reduced to 16 colors, with the first one transparent.
         </p>
 
         <div class="divider"></div>
@@ -196,17 +196,21 @@
         <!-- Action Buttons -->
         <div class="action-row">
           <button id="reset-btn" class="reset-btn" aria-label="Reset all inputs and file">Reset</button>
-          <button id="download-btn" class="download-btn" disabled aria-label="Download compiled binary">
+          <button id="download-btn" class="download-btn" disabled>
             Download banner.bin
           </button>
         </div>
+        <p class="help-text flashcart-note">
+          Changing a flashcart's banner? Stock DSi and 3DS consoles block carts with a changed banner.
+          Read the <a href="https://sanrax.github.io/flashcart-guides/tutorials/icon-change/" target="_blank" rel="noopener">flashcart banner guide</a> first.
+        </p>
         <!-- Hidden canvas for 32x32 image processing -->
         <canvas id="resize-canvas" width="32" height="32" style="display:none"></canvas>
       </section>
 
     <!-- Instructions Footer -->
     <footer class="app-footer">
-      <p>This is your NDS banner data. Follow your homebrew project's build steps, or your flashcart guide's instructions, to put it to&nbsp;use.</p>
+      <p>The downloaded <code>banner.bin</code> is your NDS banner data. Add it to your homebrew project before building, or flash it by following your flashcart&nbsp;guide.</p>
       <p class="footer-credit">Made with <span aria-hidden="true">❤️</span> from Argentina by <a href="https://github.com/tasken" target="_blank" rel="noopener">@tasken</a> &middot; <a href="https://github.com/tasken/banner-maker" target="_blank" rel="noopener">Source on GitHub</a></p>
     </footer>
   </main>
