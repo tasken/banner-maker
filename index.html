@@ -100,6 +100,7 @@
               <div class="pill-group">
                 <button type="button" id="btn-mode-crop" class="pill-btn active" aria-label="Crop a square from the image">Crop</button>
                 <button type="button" id="btn-mode-fit" class="pill-btn" aria-label="Fit the whole image, with transparent padding">Fit</button>
+              <button type="button" id="btn-mode-fill" class="pill-btn" aria-label="Fill the square, cutting off the edges that stick out">Fill</button>
               </div>
             </div>
           
@@ -250,6 +251,16 @@
             <div class="pill-group">
               <button type="button" id="cover-btn-mode-crop" class="pill-btn active" aria-label="Crop a 106 by 96 area from the image">Crop</button>
               <button type="button" id="cover-btn-mode-fit" class="pill-btn" aria-label="Fit the whole image, padded with the background color">Fit</button>
+              <button type="button" id="cover-btn-mode-fill" class="pill-btn" aria-label="Fill the cover, cutting off the edges that stick out">Fill</button>
+            </div>
+          </div>
+          <div id="cover-padding-row" class="label-row hidden">
+            <span id="cover-padding-label" class="crop-label">Padding</span>
+            <div class="pill-group" role="group" aria-labelledby="cover-padding-label">
+              <button type="button" id="cover-btn-pad-0" class="pill-btn active" aria-label="No padding">Off</button>
+              <button type="button" id="cover-btn-pad-5" class="pill-btn" aria-label="5 pixel padding">5</button>
+              <button type="button" id="cover-btn-pad-10" class="pill-btn" aria-label="10 pixel padding">10</button>
+              <button type="button" id="cover-btn-pad-15" class="pill-btn" aria-label="15 pixel padding">15</button>
             </div>
           </div>
           <div id="cover-cropper-wrapper" class="cropper-wrapper">

@@ -7,7 +7,7 @@ Make the icon and title (`banner.bin`) that the DS and DSi menus show for your h
 ## How to use
 
 1. Drop an image, or an existing `banner.bin`, onto the upload area.
-2. Pick `Crop` to choose a square, or `Fit` to use the whole image with transparent padding.
+2. Pick `Crop` to choose a square, `Fit` to use the whole image with transparent padding, or `Fill` to use the largest centered square.
 3. Using a photo? Turn on `Pixel enhance` to boost contrast and dither colors so it reads like pixel art.
 4. Fill in the **Game title**, plus an optional **Subtitle** and **Author / Publisher**.
 5. Click `Download banner.bin`.
@@ -23,8 +23,8 @@ Then add the file to your homebrew project before building, or flash it to your 
 ### Pico Launcher covers
 
 1. Open the `Pico cover` tab.
-2. Drop an image, then pick `Crop` or `Fit`.
-3. Pick a `Background`, `Black` or `White`: covers can't be see-through, so transparent parts and the bars Fit adds get this color.
+2. Drop an image, then pick `Crop`, `Fit` or `Fill` (the largest centered area, edges cut). In `Fit`, `Padding` adds a 5, 10 or 15 px margin around the image. A new image keeps the options you picked; switching tabs starts the tab over.
+3. Check the `Background`, `Black` or `White`: covers can't be see-through, so transparent parts and the bars Fit adds get this color. Each upload picks one for you (matching the image's edge, or contrasting with a see-through logo) until you choose one yourself.
 4. Leave `Dither` on for photos and box art, or turn it off for flat artwork.
 5. Click `Download cover.bmp` and copy it to your SD card:
    - inside a folder as `cover.bmp`, for that folder,

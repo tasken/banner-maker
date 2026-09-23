@@ -1,6 +1,6 @@
 import { packBannerIcon, quantize, createImageSource, downscaleRegion, decodeBanner, decodeIndexedIcon, getBannerFormat, indicesToRgba, pixelsToRgba } from './core.js?v=__COMMIT_HASH__';
-import { createCanvas, readImagePixels, saveFile, setActiveButton } from './dom.js?v=__COMMIT_HASH__';
-import './cover.js?v=__COMMIT_HASH__';
+import { createCanvas, drawCartridgePlaceholder, readImagePixels, saveFile, setActiveButton } from './dom.js?v=__COMMIT_HASH__';
+import { resetCover } from './cover.js?v=__COMMIT_HASH__';
 
 // DOM elements
 const dropzone = document.getElementById('dropzone');
@@ -25,6 +25,7 @@ const cropperWrapper = document.getElementById('cropper-wrapper');
 const cropEditorImg = document.getElementById('crop-editor-img');
 const btnModeCrop = document.getElementById('btn-mode-crop');
 const btnModeFit = document.getElementById('btn-mode-fit');
+const btnModeFill = document.getElementById('btn-mode-fill');
 const btnPixelArtOff = document.getElementById('btn-pixelart-off');
 const btnPixelArtOn = document.getElementById('btn-pixelart-on');
 const transparencyInfo = document.getElementById('transparency-info');
@@ -70,38 +71,28 @@ btnThemeSystem.addEventListener('click', () => applyTheme('system'));
 btnThemeDark.addEventListener('click', () => applyTheme('dark'));
 
 // Tool tabs (ARIA tabs pattern). The active tab lives in the URL hash so a
-// link can open the cover tool directly.
+// link can open the cover tool directly. Leaving a tab resets it, so each
+// visit starts fresh (and no Cropper ever sits in a hidden panel).
 const tabs = [
-  { tab: document.getElementById('tab-banner'), panel: document.getElementById('panel-banner'), hash: '' },
-  { tab: document.getElementById('tab-cover'), panel: document.getElementById('panel-cover'), hash: '#cover' }
+  { tab: document.getElementById('tab-banner'), panel: document.getElementById('panel-banner'), hash: '', reset: () => resetAll() },
+  { tab: document.getElementById('tab-cover'), panel: document.getElementById('panel-cover'), hash: '#cover', reset: () => resetCover() }
 ];
-
-// A panel's Cropper, if one is open (Cropper.js keeps it on its image).
-function panelCropper(panel) {
-  return panel.querySelector('.crop-editor-img')?.cropper;
-}
+let currentTab = -1;
 
 function selectTab(index, { focus = false } = {}) {
+  if (currentTab !== -1 && currentTab !== index) tabs[currentTab].reset();
+  currentTab = index;
   tabs.forEach(({ tab, panel }, i) => {
     const selected = i === index;
     tab.classList.toggle('active', selected);
     tab.setAttribute('aria-selected', String(selected));
     tab.tabIndex = selected ? 0 : -1;
-    // A hidden Cropper measures its container as 0 px, and a window resize
-    // would scale its crop box down to nothing. Disabled, it skips resizes.
-    if (!selected) panelCropper(panel)?.disable();
     panel.classList.toggle('hidden', !selected);
   });
   if (focus) tabs[index].tab.focus();
   const { hash } = tabs[index];
   if (location.hash !== hash) {
     history.replaceState(null, '', hash || location.pathname + location.search);
-  }
-  // Catch up on any window resize the shown panel's Cropper sat out.
-  const cropper = panelCropper(tabs[index].panel);
-  if (cropper) {
-    cropper.enable();
-    cropper.resize();
   }
 }
 
@@ -134,7 +125,8 @@ let processImageFrame = 0;
 let currentPixels = null; // 1024 RGBA objects
 let indexedIcon = null; // decodeIndexedIcon() result when the upload is already a DS icon
 let cropperInstance = null;
-let layoutMode = 'crop'; // 'crop' or 'fit'
+let layoutMode = 'crop'; // 'crop', 'fit' or 'fill'
+let layoutChosen = false; // once the user picks Crop or Fit, new images keep it
 let pixelArtEnhance = false;
 let downloadConfirmTimeout = null;
 
@@ -190,16 +182,20 @@ btnScale1x.addEventListener('click', () => setPreviewScale2x(false));
 btnScale2x.addEventListener('click', () => setPreviewScale2x(true));
 
 btnModeCrop.addEventListener('click', () => {
+  layoutChosen = true;
   if (layoutMode === 'crop') return;
   setLayoutMode('crop');
   initCropper();
 });
 
-btnModeFit.addEventListener('click', () => {
-  if (layoutMode === 'fit') return;
-  setLayoutMode('fit');
-  destroyCropper();
-  processImage();
+[[btnModeFit, 'fit'], [btnModeFill, 'fill']].forEach(([button, mode]) => {
+  button.addEventListener('click', () => {
+    layoutChosen = true;
+    if (layoutMode === mode) return;
+    setLayoutMode(mode);
+    destroyCropper();
+    processImage();
+  });
 });
 
 [[btnPixelArtOff, false], [btnPixelArtOn, true]].forEach(([button, enhance]) => {
@@ -217,9 +213,8 @@ function setPreviewScale2x(enabled) {
 
 function setLayoutMode(mode) {
   layoutMode = mode;
-  const crop = mode === 'crop';
-  setActiveButton(crop ? btnModeCrop : btnModeFit, crop ? btnModeFit : btnModeCrop);
-  cropperWrapper.classList.toggle('hidden', !crop);
+  [[btnModeCrop, 'crop'], [btnModeFit, 'fit'], [btnModeFill, 'fill']].forEach(([button, m]) => button.classList.toggle('active', m === mode));
+  cropperWrapper.classList.toggle('hidden', mode !== 'crop');
 }
 
 function setPixelArtEnhance(enabled) {
@@ -366,8 +361,9 @@ function handleFileSelect() {
       const { rgba, width, height } = readImagePixels(img);
       setLoadedImage(img, event.target.result, rgba, width, height, icon);
 
-      // A square image fits as-is; anything else starts in crop mode
-      setLayoutMode(img.width === img.height ? 'fit' : 'crop');
+      // Keep the user's Crop/Fit choice; until they make one, a square image
+      // fits as-is and anything else starts in crop mode.
+      if (!layoutChosen) setLayoutMode(img.width === img.height ? 'fit' : 'crop');
 
       // Show file selection success state. The preview canvas may currently
       // be sitting inside the "banner loaded" card from a previous .bin
@@ -505,6 +501,13 @@ function cropRegion() {
   return size > 0 ? { x: data.x, y: data.y, size } : null;
 }
 
+// Fill mode takes the largest centered square; the edges that stick out are cut.
+function fillRegion() {
+  const { width, height } = loadedImage;
+  const size = Math.min(width, height);
+  return { x: Math.floor((width - size) / 2), y: Math.floor((height - size) / 2), size };
+}
+
 // Fit mode centers the whole image in a square; the padding is transparent.
 function fitRegion() {
   const { width, height } = loadedImage;
@@ -515,7 +518,7 @@ function fitRegion() {
 function processImage() {
   if (!loadedImage || !imageSource) return;
 
-  const region = layoutMode === 'crop' ? cropRegion() : fitRegion();
+  const region = layoutMode === 'crop' ? cropRegion() : layoutMode === 'fill' ? fillRegion() : fitRegion();
   if (!region) return;
 
   // High-res preview of the region (96x96)
@@ -532,7 +535,8 @@ function processImage() {
 // A ready-made DS icon keeps its own palette, but only when used whole and
 // unenhanced; cropping or pixel enhance needs a new palette.
 function usesIndexedIcon() {
-  return Boolean(indexedIcon) && layoutMode === 'fit' && !pixelArtEnhance;
+  // Such icons are always 32x32 squares, so Fit and Fill both use all of it.
+  return Boolean(indexedIcon) && layoutMode !== 'crop' && !pixelArtEnhance;
 }
 
 function currentIcon() {
@@ -590,6 +594,7 @@ function resetAll() {
   drawPlaceholderIcon();
   setPreviewScale2x(false);
   setPixelArtEnhance(false);
+  layoutChosen = false;
 }
 
 function resetDropzonePrompt() {
@@ -616,36 +621,8 @@ function resetDropzonePrompt() {
 }
 
 function drawPlaceholderIcon() {
-  const ctx = resizeCtx;
-  ctx.clearRect(0, 0, 32, 32);
-
-  // Draw a cute retro game cartridge outline
-  ctx.fillStyle = '#475569'; // slate-600 (cartridge body)
-  ctx.fillRect(4, 4, 24, 24);
-
-  // Label sticker border
-  ctx.fillStyle = '#1e293b'; // slate-800
-  ctx.fillRect(6, 6, 20, 16);
-
-  // D-Pad icon inside label (cyan accent)
-  ctx.fillStyle = '#22d3ee';
-  ctx.fillRect(9, 13, 5, 2);
-  ctx.fillRect(10, 12, 3, 4);
-
-  // Pixelated face buttons (red and yellow)
-  ctx.fillStyle = '#ef4444'; // Red button
-  ctx.fillRect(19, 13, 2, 2);
-  ctx.fillStyle = '#eab308'; // Yellow button
-  ctx.fillRect(17, 15, 2, 2);
-
-  // Bottom cartridge pins
-  ctx.fillStyle = '#0f172a'; // slate-900 (groove)
-  ctx.fillRect(6, 22, 20, 2);
-  ctx.fillStyle = '#94a3b8'; // silver pins
-  for (let x = 8; x < 24; x += 4) {
-    ctx.fillRect(x, 24, 2, 2);
-  }
-
+  resizeCtx.clearRect(0, 0, 32, 32);
+  drawCartridgePlaceholder(resizeCtx);
   showIconPreview();
 }
 

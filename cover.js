@@ -1,5 +1,5 @@
-import { COVER_SIZE, createImageSource, downscaleRegionRect, encodeCoverBmp, flattenOver, indicesToRgba, pixelsToRgba, quantizeImage } from './core.js?v=__COMMIT_HASH__';
-import { readImagePixels, saveFile, setActiveButton } from './dom.js?v=__COMMIT_HASH__';
+import { COVER_SIZE, createImageSource, downscaleRegionRect, encodeCoverBmp, flattenOver, indicesToRgba, pickBackground, pixelsToRgba, quantizeImage } from './core.js?v=__COMMIT_HASH__';
+import { createCanvas, drawCartridgePlaceholder, readImagePixels, saveFile, setActiveButton } from './dom.js?v=__COMMIT_HASH__';
 
 // Pico cover tab: any image in, a 128 x 96 cover.bmp out. Its state is
 // separate from the Banner tab.
@@ -20,6 +20,9 @@ const cropperWrapper = document.getElementById('cover-cropper-wrapper');
 const cropEditorImg = document.getElementById('cover-crop-editor-img');
 const btnModeCrop = document.getElementById('cover-btn-mode-crop');
 const btnModeFit = document.getElementById('cover-btn-mode-fit');
+const btnModeFill = document.getElementById('cover-btn-mode-fill');
+const paddingRow = document.getElementById('cover-padding-row');
+const paddingButtons = [0, 5, 10, 15].map(px => [px, document.getElementById(`cover-btn-pad-${px}`)]);
 const btnBgBlack = document.getElementById('cover-btn-bg-black');
 const btnBgWhite = document.getElementById('cover-btn-bg-white');
 const btnDitherOff = document.getElementById('cover-btn-dither-off');
@@ -32,14 +35,18 @@ const resetBtn = document.getElementById('cover-reset-btn');
 const downloadBtn = document.getElementById('cover-download-btn');
 
 const previewCtx = previewCanvas.getContext('2d');
+previewCtx.imageSmoothingEnabled = false;
 
 let loadedImage = null;
 let imageSource = null; // createImageSource() pyramid of loadedImage's pixels
 let imageSourceScale = 1; // imageSource pixels per loadedImage pixel
 let cropperInstance = null;
-let layoutMode = 'crop'; // 'crop' or 'fit'
+let layoutMode = 'crop'; // 'crop', 'fit' or 'fill'
+let layoutChosen = false; // once the user picks Crop or Fit, new images keep it
 let dither = true;
+let padding = 0; // Fit mode margin in cover pixels, on every side
 let background = 'black'; // key of BACKGROUNDS
+let backgroundChosen = false; // until the user picks one, each upload picks it (pickBackground)
 let processFrame = 0;
 let fullPassTimer = 0;
 let loadToken = 0; // bumped per upload; stale loads check it and bail
@@ -66,18 +73,30 @@ dropzone.addEventListener('drop', (e) => {
 });
 
 btnModeCrop.addEventListener('click', () => {
+  layoutChosen = true;
   if (layoutMode === 'crop') return;
   setLayoutMode('crop');
   initCropper();
 });
-btnModeFit.addEventListener('click', () => {
-  if (layoutMode === 'fit') return;
-  setLayoutMode('fit');
-  destroyCropper();
-  processCover();
+[[btnModeFit, 'fit'], [btnModeFill, 'fill']].forEach(([button, mode]) => {
+  button.addEventListener('click', () => {
+    layoutChosen = true;
+    if (layoutMode === mode) return;
+    setLayoutMode(mode);
+    destroyCropper();
+    processCover();
+  });
+});
+paddingButtons.forEach(([px, button]) => {
+  button.addEventListener('click', () => {
+    if (padding === px) return;
+    setPadding(px);
+    processCover();
+  });
 });
 [[btnBgBlack, 'black'], [btnBgWhite, 'white']].forEach(([button, value]) => {
   button.addEventListener('click', () => {
+    backgroundChosen = true;
     if (background === value) return;
     setBackground(value);
     processCover();
@@ -97,9 +116,14 @@ downloadBtn.addEventListener('click', triggerDownload);
 
 function setLayoutMode(mode) {
   layoutMode = mode;
-  const crop = mode === 'crop';
-  setActiveButton(crop ? btnModeCrop : btnModeFit, crop ? btnModeFit : btnModeCrop);
-  cropperWrapper.classList.toggle('hidden', !crop);
+  [[btnModeCrop, 'crop'], [btnModeFit, 'fit'], [btnModeFill, 'fill']].forEach(([button, m]) => button.classList.toggle('active', m === mode));
+  cropperWrapper.classList.toggle('hidden', mode !== 'crop');
+  paddingRow.classList.toggle('hidden', mode !== 'fit');
+}
+
+function setPadding(px) {
+  padding = px;
+  paddingButtons.forEach(([value, button]) => button.classList.toggle('active', value === px));
 }
 
 function setBackground(value) {
@@ -190,18 +214,20 @@ function handleFile(file) {
       loadedImage = img;
       imageSource = createImageSource(rgba, width, height);
       imageSourceScale = width / img.width;
+      if (!backgroundChosen) setBackground(pickBackground(rgba, width, height));
 
       dropzonePrompt.classList.add('hidden');
       dropzoneFilename.textContent = `✓ ${file.name}`;
       dropzoneFilename.classList.remove('hidden');
       cropControl.classList.remove('hidden');
 
-      // An image already shaped like a cover fits as-is
+      // Keep the user's Crop/Fit choice; until they make one, an image
+      // already shaped like a cover fits as-is and anything else is cropped.
       const shapedLikeCover = Math.abs(img.width / img.height - COVER_ASPECT) < 0.01;
-      setLayoutMode(shapedLikeCover ? 'fit' : 'crop');
+      if (!layoutChosen) setLayoutMode(shapedLikeCover ? 'fit' : 'crop');
       destroyCropper();
       cropEditorImg.src = event.target.result;
-      if (shapedLikeCover) {
+      if (layoutMode !== 'crop') {
         processCover();
       } else {
         initCropper();
@@ -245,11 +271,21 @@ function cropRegion() {
   return data.width > 0 && data.height > 0 ? { x: data.x, y: data.y, w: data.width, h: data.height } : null;
 }
 
-// Fit mode centers the whole image in a 106:96 box; the padding is the background.
+// Fill mode takes the largest centered 106:96 area; the edges that stick out are cut.
+function fillRegion() {
+  const { width, height } = loadedImage;
+  const w = Math.min(width, height * COVER_ASPECT);
+  const h = w / COVER_ASPECT;
+  return { x: (width - w) / 2, y: (height - h) / 2, w, h };
+}
+
+// Fit mode centers the whole image inside the cover, less `padding` pixels on
+// every side; everything around it is the background.
 function fitRegion() {
   const { width, height } = loadedImage;
-  const w = Math.max(width, height * COVER_ASPECT);
-  const h = w / COVER_ASPECT;
+  const scale = Math.min((COVER_W - 2 * padding) / width, (COVER_H - 2 * padding) / height); // cover px per image px
+  const w = COVER_W / scale;
+  const h = COVER_H / scale;
   return { x: (width - w) / 2, y: (height - h) / 2, w, h };
 }
 
@@ -268,7 +304,7 @@ function processCover() {
   cancelAnimationFrame(processFrame);
   processFrame = 0;
   if (!loadedImage || !imageSource) return;
-  const region = layoutMode === 'crop' ? cropRegion() : fitRegion();
+  const region = layoutMode === 'crop' ? cropRegion() : layoutMode === 'fill' ? fillRegion() : fitRegion();
   if (!region) return;
 
   currentCover = quantizeImage(coverPixels(region), COVER_W, COVER_H, { colors: 256, transparent: false, dither });
@@ -290,15 +326,26 @@ function unloadImage() {
   dropzonePrompt.classList.remove('hidden');
   dropzoneFilename.classList.add('hidden');
   dropzoneFilename.textContent = '';
-  previewCtx.clearRect(0, 0, COVER_W, COVER_H);
+  drawPreviewPlaceholder();
 }
 
-function resetCover() {
+// Same cartridge as the Banner tab's empty preview, 3x (96 px tall), centered.
+function drawPreviewPlaceholder() {
+  const icon = createCanvas(32, 32);
+  drawCartridgePlaceholder(icon.getContext('2d'));
+  previewCtx.clearRect(0, 0, COVER_W, COVER_H);
+  previewCtx.drawImage(icon, (COVER_W - 96) / 2, 0, 96, 96);
+}
+
+export function resetCover() {
   fileInput.value = '';
   unloadImage();
   clearError();
   setLayoutMode('crop');
+  layoutChosen = false;
   setBackground('black');
+  backgroundChosen = false;
+  setPadding(0);
   setDither(true);
   setPreviewScale2x(false);
 }
@@ -320,3 +367,5 @@ function triggerDownload() {
     downloadBtn.classList.remove('success');
   }, 1800);
 }
+
+drawPreviewPlaceholder();

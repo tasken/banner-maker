@@ -1092,6 +1092,43 @@ export function decodeBanner(bannerBytes) {
   };
 }
 
+/**
+ * Picks a cover background for an image. With see-through areas (logos,
+ * cut-out art) it picks the color that contrasts with the visible content, so
+ * the art stays readable. Otherwise it matches the image's outer edge, so Fit
+ * bars and padding blend in. Light vs dark is Rec. 709 luma against 50%.
+ *
+ * @param {Uint8ClampedArray} rgba - width * height RGBA pixels
+ * @param {number} width
+ * @param {number} height
+ * @returns {'black' | 'white'}
+ */
+export function pickBackground(rgba, width, height) {
+  let seeThrough = 0;
+  for (let i = 3; i < rgba.length; i += 4) {
+    if (rgba[i] < 128) seeThrough++;
+  }
+  const transparent = seeThrough > width * height * 0.02;
+
+  let sum = 0;
+  let count = 0;
+  const add = (x, y) => {
+    const i = (y * width + x) * 4;
+    if (rgba[i + 3] < 128) return;
+    sum += 0.2126 * rgba[i] + 0.7152 * rgba[i + 1] + 0.0722 * rgba[i + 2];
+    count++;
+  };
+  if (transparent) {
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) add(x, y);
+  } else {
+    for (let x = 0; x < width; x++) { add(x, 0); add(x, height - 1); }
+    for (let y = 1; y < height - 1; y++) { add(0, y); add(width - 1, y); }
+  }
+  if (count === 0) return 'black';
+  const light = sum / count >= 128;
+  return transparent === light ? 'black' : 'white';
+}
+
 // Pico Launcher cover (pico-launcher BmpFileCover.cpp, BmpHeader.h): a
 // 128 x 96, 8 bpp BMP with a 40-byte BITMAPINFOHEADER and 256 colors. Only
 // the left 106 x 96 are shown. Rows must be stored bottom-up: Pico copies
