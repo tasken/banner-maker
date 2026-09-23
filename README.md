@@ -29,7 +29,7 @@ Then add the file to your homebrew project before building, or flash it to your 
 5. Click `Download cover.bmp` and copy it to your SD card:
    - inside a folder as `cover.bmp`, for that folder,
    - in `/_pico/covers/user/` as the game's file name plus `.bmp` (for example `myGame.nds.bmp`),
-   - or in `/_pico/covers/nds/` or `/_pico/covers/gba/` as the game code (for example `ABCD.bmp`).
+   - or in `/_pico/covers/nds/` or `/_pico/covers/gba/` as the game's 4-letter code from its ROM header (for example `ABCD.bmp`).
 
 ## Features
 
@@ -37,7 +37,7 @@ Then add the file to your homebrew project before building, or flash it to your 
 - **Edit existing banners**: loads the icon and text from any `banner.bin` (NTR v1–v3 or DSi animated) and checks every checksum the DSi menu checks. Downloads are always static NTR v1, so Chinese/Korean titles and icon animations aren't kept.
 - **Flashcart-ready**: every download is a 2,112-byte NTR v1 banner with a valid CRC16, the format Cart-Flasher's `Write DS banner` accepts.
 - **Clean edges**: pixels under 50% opacity become transparent, and the rest keep their own color, so edges don't get halos.
-- **Pico Launcher covers**: any image becomes a 128×96, 256-color BMP in the exact layout Pico Launcher reads, stored the right way up, with the hidden right-hand strip filled black.
+- **Pico Launcher covers**: any image becomes a 128×96, 256-color BMP in the exact layout Pico Launcher reads, stored the right way up, with the hidden right-hand strip filled with the image's darkest color.
 - **Runs in your browser**: plain HTML, CSS and JavaScript, plus Cropper.js. Your files never leave your device.
 
 ## Local development

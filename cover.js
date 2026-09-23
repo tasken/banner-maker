@@ -31,6 +31,7 @@ const btnScale1x = document.getElementById('cover-btn-scale-1x');
 const btnScale2x = document.getElementById('cover-btn-scale-2x');
 const preview = document.getElementById('cover-preview');
 const previewCanvas = document.getElementById('cover-preview-canvas');
+const previewHelp = document.getElementById('cover-preview-help');
 const resetBtn = document.getElementById('cover-reset-btn');
 const downloadBtn = document.getElementById('cover-download-btn');
 
@@ -236,7 +237,7 @@ function handleFile(file) {
     img.onerror = () => {
       if (token !== loadToken) return;
       unloadImage();
-      showError("This image couldn't be opened. Try a PNG, JPG or WebP file.");
+      showError("This file isn't an image we can open. Upload a PNG, JPG or WebP.");
     };
     img.src = event.target.result;
   };
@@ -310,6 +311,7 @@ function processCover() {
   currentCover = quantizeImage(coverPixels(region), COVER_W, COVER_H, { colors: 256, transparent: false, dither });
   const rgba = indicesToRgba(currentCover.palette, currentCover.indices, { transparent: false });
   previewCtx.putImageData(new ImageData(rgba, COVER_W, COVER_H), 0, 0);
+  previewHelp.textContent = 'This is the part Pico Launcher shows, reduced to 256\u00a0colors.';
   downloadBtn.disabled = false;
 }
 
@@ -327,6 +329,7 @@ function unloadImage() {
   dropzoneFilename.classList.add('hidden');
   dropzoneFilename.textContent = '';
   drawPreviewPlaceholder();
+  previewHelp.textContent = 'Upload an image to see your cover\u00a0here.';
 }
 
 // Same cartridge as the Banner tab's empty preview, 3x (96 px tall), centered.

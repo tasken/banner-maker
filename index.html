@@ -41,7 +41,7 @@
       <p>Create custom icons and menu titles for Nintendo DS homebrew&nbsp;ROMs, and cover art for Pico&nbsp;Launcher.</p>
     </header>
 
-    <div class="tab-bar" role="tablist" aria-label="Tool">
+    <div class="tab-bar" role="tablist" aria-label="Choose a tool">
       <button type="button" role="tab" id="tab-banner" class="tab-btn active" aria-selected="true" aria-controls="panel-banner">Banner</button>
       <button type="button" role="tab" id="tab-cover" class="tab-btn" aria-selected="false" aria-controls="panel-cover" tabindex="-1">Pico cover</button>
     </div>
@@ -227,8 +227,7 @@
         </div>
         <p class="info-card-text">
           Pico Launcher shows covers at <strong>106 × 96 px</strong> with up to <strong>256 colors</strong>.
-          The file is a 128 × 96 BMP whose right 22 px stay hidden. This tool resizes any image
-          and writes that format for&nbsp;you.
+          Drop any image and this tool makes a <code>cover.bmp</code> in the exact format Pico&nbsp;reads.
         </p>
       </div>
 
@@ -249,13 +248,13 @@
           <div class="label-row">
             <span class="crop-label">Layout mode</span>
             <div class="pill-group">
-              <button type="button" id="cover-btn-mode-crop" class="pill-btn active" aria-label="Crop a 106 by 96 area from the image">Crop</button>
+              <button type="button" id="cover-btn-mode-crop" class="pill-btn active" aria-label="Choose the part of the image to use">Crop</button>
               <button type="button" id="cover-btn-mode-fit" class="pill-btn" aria-label="Fit the whole image, padded with the background color">Fit</button>
               <button type="button" id="cover-btn-mode-fill" class="pill-btn" aria-label="Fill the cover, cutting off the edges that stick out">Fill</button>
             </div>
           </div>
           <div id="cover-padding-row" class="label-row hidden">
-            <span id="cover-padding-label" class="crop-label">Padding</span>
+            <span id="cover-padding-label" class="crop-label">Padding (px)</span>
             <div class="pill-group" role="group" aria-labelledby="cover-padding-label">
               <button type="button" id="cover-btn-pad-0" class="pill-btn active" aria-label="No padding">Off</button>
               <button type="button" id="cover-btn-pad-5" class="pill-btn" aria-label="5 pixel padding">5</button>
@@ -282,7 +281,7 @@
                 <button type="button" id="cover-btn-bg-black" class="pill-btn active">Black</button>
                 <button type="button" id="cover-btn-bg-white" class="pill-btn">White</button>
               </div>
-              <span class="tooltip-trigger" tabindex="0" data-tip="Pico Launcher covers can't be see-through. Transparent parts of your image, and the bars Fit adds, get this color. White suits logos; black suits photos and box&nbsp;art." aria-label="Background help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+              <span class="tooltip-trigger" tabindex="0" data-tip="Pico Launcher covers can't be see-through. Transparent parts of your image, and the space Fit leaves around it, get this color. Each upload picks one for you until you choose one&nbsp;yourself." aria-label="Background help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
             </div>
           </div>
         </div>
@@ -311,7 +310,7 @@
         <div id="cover-preview" class="cover-preview">
           <canvas id="cover-preview-canvas" width="106" height="96"></canvas>
         </div>
-        <p class="help-text">This is the part Pico Launcher shows, reduced to 256&nbsp;colors.</p>
+        <p id="cover-preview-help" class="help-text">Upload an image to see your cover&nbsp;here.</p>
         <div class="divider"></div>
         <div class="action-row">
           <button id="cover-reset-btn" class="reset-btn" aria-label="Reset the cover image and options">Reset</button>
@@ -321,7 +320,7 @@
           Put <code>cover.bmp</code> on your SD card in one of these places:
           <br>&bull; Inside a folder, as <code>cover.bmp</code>: the cover for that&nbsp;folder.
           <br>&bull; In <code>/_pico/covers/user/</code>, renamed to the game's file name plus <code>.bmp</code>, like <code>myGame.nds.bmp</code>.
-          <br>&bull; In <code>/_pico/covers/nds/</code> or <code>/_pico/covers/gba/</code>, renamed to the 4-letter game code, like <code>ABCD.bmp</code>.
+          <br>&bull; In <code>/_pico/covers/nds/</code> or <code>/_pico/covers/gba/</code>, renamed to the game's 4-letter code from its ROM header, like <code>ABCD.bmp</code>.
         </p>
       </section>
     </div>
