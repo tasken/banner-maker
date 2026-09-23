@@ -3,6 +3,7 @@
  * DOM-independent pure functions for Node.js testing and Browser support.
  * Writes NTR v1 banner.bin files (2112 bytes / 0x840); reads NTR v1-v3 and
  * DSi animated banners.
+ * Also writes Pico Launcher cover.bmp files (128 x 96, 8 bpp).
  */
 
 /**
@@ -148,14 +149,15 @@ function boostPixelArtColor(r, g, b) {
 // the three below. dx is mirrored on right-to-left rows.
 const ERROR_DIFFUSION = [[1, 0, 7 / 16], [-1, 1, 3 / 16], [0, 1, 5 / 16], [1, 1, 1 / 16]];
 // Diffuse 80% of each pixel's error, which keeps flat areas calm and stops
-// error from streaking across the icon.
+// error from streaking across the image.
 const DITHER_DAMPING = 0.8;
 
-// Index 0 is transparent (its color is never shown), then the given colors,
-// then black for unused entries: always 16 colors.
-function buildPalette(colors) {
-  const palette = [{ r: 255, g: 0, b: 255 }, ...colors];
-  while (palette.length < 16) {
+// With a transparent slot, index 0 is transparent (its color is never shown)
+// and the given colors follow it. Unused entries are black, so the palette
+// always has size entries (16 for icons, 256 for covers).
+function buildPalette(colors, size = 16, transparent = true) {
+  const palette = transparent ? [{ r: 255, g: 0, b: 255 }, ...colors] : [...colors];
+  while (palette.length < size) {
     palette.push({ r: 0, g: 0, b: 0 });
   }
   return palette;
@@ -333,26 +335,35 @@ function snapDistinct(centers, colors) {
 }
 
 /**
- * Color quantization in native 15-bit RGB555 color space.
- * Maps low-alpha pixels to palette index 0 (transparent).
- * Images with at most maxColors RGB555 colors keep them exactly. Otherwise a
- * pixel-weighted median cut over the unique colors seeds maxColors centers,
- * k-means refines them, and every opaque pixel maps to the nearest palette
- * color by perceptual distance (with Floyd-Steinberg dithering when enhanced).
+ * Color quantization in native 15-bit RGB555 color space, for any image size.
+ * Images with at most `colors` RGB555 colors keep them exactly. Otherwise a
+ * pixel-weighted median cut over the unique colors seeds `colors` centers,
+ * k-means refines them, and every pixel maps to the nearest palette color by
+ * perceptual distance (with serpentine Floyd-Steinberg when dither is set).
  *
- * @param {Array<{r: number, g: number, b: number, a: number}>} pixels - 1024 pixels
- * @param {number} [maxColors=15]
- * @param {boolean} [enhance=false] - Boosts contrast/saturation and applies error-diffusion dithering.
+ * @param {Array<{r: number, g: number, b: number, a: number}>} pixels - width * height pixels, row-major
+ * @param {number} width
+ * @param {number} height
+ * @param {object} [options]
+ * @param {number} [options.colors=15] - Palette colors, not counting the transparent slot
+ * @param {boolean} [options.transparent=true] - Reserve index 0 for pixels under 50% alpha.
+ *   When false, alpha is ignored and indices run 0..colors-1.
+ * @param {boolean} [options.dither=false] - Error-diffusion dithering
+ * @param {boolean} [options.boost=false] - Contrast/saturation boost before quantizing
  * @returns {{palette: Array<{r: number, g: number, b: number}>, indices: Uint8Array}}
+ *   colors (+1 with transparent) palette entries, padded with black
  */
-export function quantize(pixels, maxColors = 15, enhance = false) {
-  const indices = new Uint8Array(1024); // Defaults to 0 (transparent)
+export function quantizeImage(pixels, width, height, { colors: maxColors = 15, transparent = true, dither = false, boost = false } = {}) {
+  const count = width * height;
+  const offset = transparent ? 1 : 0; // index of the first real color
+  const paletteSize = maxColors + offset;
+  const indices = new Uint8Array(count); // Defaults to 0 (transparent)
   const opaquePixels = [];
 
-  for (let i = 0; i < pixels.length; i++) {
+  for (let i = 0; i < count; i++) {
     const p = pixels[i];
-    if (p.a >= 128) {
-      const color = enhance ? boostPixelArtColor(p.r, p.g, p.b) : p;
+    if (!transparent || p.a >= 128) {
+      const color = boost ? boostPixelArtColor(p.r, p.g, p.b) : p;
       // Snap to native RGB555 hardware space so colors that collapse on DS aren't duplicated
       const snapped = snapToRgb555(color.r, color.g, color.b);
       opaquePixels.push({
@@ -367,7 +378,7 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
 
   // If no opaque pixels, every index stays 0 (transparent)
   if (opaquePixels.length === 0) {
-    return { palette: buildPalette([]), indices };
+    return { palette: buildPalette([], paletteSize, transparent), indices };
   }
 
   // Unique colors with pixel counts, in first-seen order
@@ -386,49 +397,61 @@ export function quantize(pixels, maxColors = 15, enhance = false) {
 
   // Fast path: the image already fits, so map it exactly
   if (colors.length <= maxColors) {
-    const keyToIndex = new Map(colors.map((c, k) => [c.key15, k + 1]));
+    const keyToIndex = new Map(colors.map((c, k) => [c.key15, k + offset]));
     for (const p of opaquePixels) {
       indices[p.originalIndex] = keyToIndex.get(p.key15);
     }
-    return { palette: buildPalette(colors.map(c => ({ r: c.r, g: c.g, b: c.b }))), indices };
+    return { palette: buildPalette(colors.map(c => ({ r: c.r, g: c.g, b: c.b })), paletteSize, transparent), indices };
   }
 
   const centers = medianCut(colors, maxColors).map(weightedMean);
   refineCenters(colors, centers);
   const paletteColors = snapDistinct(centers, colors);
-  const palette = buildPalette(paletteColors);
+  const palette = buildPalette(paletteColors, paletteSize, transparent);
 
   // Map every opaque pixel to its nearest palette color
-  if (enhance) {
-    diffuseErrors(opaquePixels, paletteColors, indices);
+  if (dither) {
+    diffuseErrors(opaquePixels, paletteColors, indices, width, height, offset);
   } else {
     for (const p of opaquePixels) {
-      indices[p.originalIndex] = 1 + nearestIndex(p, paletteColors);
+      indices[p.originalIndex] = offset + nearestIndex(p, paletteColors);
     }
   }
 
   return { palette, indices };
 }
 
+/**
+ * Quantizes a 32x32 icon: 15 colors plus transparent index 0.
+ * @param {Array<{r: number, g: number, b: number, a: number}>} pixels - 1024 pixels
+ * @param {number} [maxColors=15]
+ * @param {boolean} [enhance=false] - Boosts contrast/saturation and applies error-diffusion dithering.
+ * @returns {{palette: Array<{r: number, g: number, b: number}>, indices: Uint8Array}}
+ */
+export function quantize(pixels, maxColors = 15, enhance = false) {
+  return quantizeImage(pixels, 32, 32, { colors: maxColors, transparent: true, dither: enhance, boost: enhance });
+}
+
 // Serpentine Floyd-Steinberg dithering: maps each opaque pixel to its nearest
 // palette color after adding the error its already-mapped neighbors passed
-// on. Transparent pixels neither take nor pass on error.
-function diffuseErrors(opaquePixels, paletteColors, indices) {
-  const pixelAt = new Array(1024).fill(null);
+// on. Transparent pixels neither take nor pass on error. offset is the index
+// of paletteColors[0] in the final palette.
+function diffuseErrors(opaquePixels, paletteColors, indices, width, height, offset) {
+  const pixelAt = new Array(width * height).fill(null);
   for (const p of opaquePixels) pixelAt[p.originalIndex] = p;
-  const error = new Float64Array(1024 * 3);
+  const error = new Float64Array(width * height * 3);
 
-  for (let y = 0; y < 32; y++) {
+  for (let y = 0; y < height; y++) {
     const dir = y % 2 === 0 ? 1 : -1;
-    for (let step = 0; step < 32; step++) {
-      const x = dir === 1 ? step : 31 - step;
-      const i = y * 32 + x;
+    for (let step = 0; step < width; step++) {
+      const x = dir === 1 ? step : width - 1 - step;
+      const i = y * width + x;
       const p = pixelAt[i];
       if (!p) continue;
 
       const want = { r: p.r + error[i * 3], g: p.g + error[i * 3 + 1], b: p.b + error[i * 3 + 2] };
       const k = nearestIndex(want, paletteColors);
-      indices[i] = k + 1;
+      indices[i] = k + offset;
 
       const errR = (want.r - paletteColors[k].r) * DITHER_DAMPING;
       const errG = (want.g - paletteColors[k].g) * DITHER_DAMPING;
@@ -436,8 +459,8 @@ function diffuseErrors(opaquePixels, paletteColors, indices) {
       for (const [dx, dy, share] of ERROR_DIFFUSION) {
         const nx = x + dx * dir;
         const ny = y + dy;
-        if (nx < 0 || nx > 31 || ny > 31) continue;
-        const j = ny * 32 + nx;
+        if (nx < 0 || nx >= width || ny >= height) continue;
+        const j = ny * width + nx;
         if (!pixelAt[j]) continue;
         error[j * 3] += errR * share;
         error[j * 3 + 1] += errG * share;
@@ -529,16 +552,18 @@ export function rgb555ToPalette(bytes) {
 }
 
 /**
- * Renders palette indices as RGBA. Index 0 is transparent (0, 0, 0, 0);
- * every other index is its opaque palette color.
+ * Renders palette indices as RGBA. By default index 0 is transparent
+ * (0, 0, 0, 0) and every other index is its opaque palette color. With
+ * transparent: false every index, 0 included, is opaque (cover previews).
  * @param {Array<{r: number, g: number, b: number}>} palette
- * @param {Uint8Array} indices - 1024 pixel indices
- * @returns {Uint8ClampedArray} 32x32 RGBA pixels
+ * @param {Uint8Array} indices - Pixel indices, row-major
+ * @param {{transparent?: boolean}} [options]
+ * @returns {Uint8ClampedArray} RGBA pixels, 4 bytes per index
  */
-export function indicesToRgba(palette, indices) {
+export function indicesToRgba(palette, indices, { transparent = true } = {}) {
   const rgba = new Uint8ClampedArray(indices.length * 4);
   for (let i = 0; i < indices.length; i++) {
-    if (indices[i] === 0) continue;
+    if (transparent && indices[i] === 0) continue;
     const color = palette[indices[i]];
     rgba[i * 4] = color.r;
     rgba[i * 4 + 1] = color.g;
@@ -787,8 +812,12 @@ export function downscaleBox(srcData, srcSize) {
   return toPixelObjects(resampleBox(srcData, srcSize, srcSize, 0, 0, srcSize, srcSize, 32, 32));
 }
 
-// A region keeps at least this many source samples per axis (8 per icon
-// pixel) when downscaleRegion picks a smaller pyramid level.
+// A region keeps at least this many source samples per output pixel on each
+// axis when downscaleRegionRect picks a smaller pyramid level.
+const SAMPLES_PER_PIXEL = 8;
+
+// createImageSource stops halving once a level's longest side drops below
+// twice this (8 samples for each of an icon's 32 pixels).
 const PYRAMID_MIN_SAMPLES = 256;
 
 /**
@@ -827,16 +856,78 @@ export function createImageSource(rgba, width, height) {
  * @returns {Array<{r: number, g: number, b: number, a: number}>} 1024 resized pixels
  */
 export function downscaleRegion(source, x, y, size) {
-  // Use the smallest level that still keeps PYRAMID_MIN_SAMPLES across the region.
+  return downscaleRegionRect(source, x, y, size, size, 32, 32);
+}
+
+/**
+ * Downscales a rectangular region of an image source to outW x outH, with the
+ * same alpha-weighted box filter. The region may extend past the image edges
+ * (that area is transparent).
+ *
+ * @param {ReturnType<typeof createImageSource>} source
+ * @param {number} x - Region left edge
+ * @param {number} y - Region top edge
+ * @param {number} w - Region width
+ * @param {number} h - Region height
+ * @param {number} outW
+ * @param {number} outH
+ * @param {{nearest?: boolean}} [options] - nearest: sample the source pixel under
+ *   each output pixel's center instead of averaging, for enlarging pixel art
+ *   without blending in-between colors
+ * @returns {Array<{r: number, g: number, b: number, a: number}>} outW * outH pixels, row-major
+ */
+export function downscaleRegionRect(source, x, y, w, h, outW, outH, { nearest = false } = {}) {
+  if (nearest) {
+    const { data, width, height } = source.levels[0];
+    const s = width / source.width;
+    return toPixelObjects(sampleNearest(data, width, height, x * s, y * s, w * s, h * s, outW, outH));
+  }
+  // Use the smallest level that still keeps SAMPLES_PER_PIXEL samples per
+  // output pixel across and down the region.
   let level = source.levels[0];
   for (let i = 1; i < source.levels.length; i++) {
     const candidate = source.levels[i];
-    if (size * (candidate.width / source.width) < PYRAMID_MIN_SAMPLES) break;
+    const scale = candidate.width / source.width;
+    if (w * scale < SAMPLES_PER_PIXEL * outW || h * scale < SAMPLES_PER_PIXEL * outH) break;
     level = candidate;
   }
   const sx = level.width / source.width;
   const sy = level.height / source.height;
-  return toPixelObjects(resampleBox(level.data, level.width, level.height, x * sx, y * sy, size * sx, size * sy, 32, 32));
+  return toPixelObjects(resampleBox(level.data, level.width, level.height, x * sx, y * sy, w * sx, h * sy, outW, outH));
+}
+
+// Nearest-neighbor counterpart of resampleBox: each output pixel copies the
+// source pixel under its center. Outside the source is fully transparent.
+function sampleNearest(src, srcW, srcH, rx, ry, rw, rh, dw, dh) {
+  const out = new Uint8ClampedArray(dw * dh * 4);
+  for (let dy = 0; dy < dh; dy++) {
+    const sy = Math.floor(ry + ((dy + 0.5) * rh) / dh);
+    if (sy < 0 || sy >= srcH) continue;
+    for (let dx = 0; dx < dw; dx++) {
+      const sx = Math.floor(rx + ((dx + 0.5) * rw) / dw);
+      if (sx < 0 || sx >= srcW) continue;
+      const i = (sy * srcW + sx) * 4;
+      out.set(src.subarray(i, i + 4), (dy * dw + dx) * 4);
+    }
+  }
+  return out;
+}
+
+/**
+ * Composites pixels over a solid background, for outputs with no
+ * transparency (covers). Partly transparent edges blend into it; fully
+ * transparent pixels become the background.
+ * @param {Array<{r: number, g: number, b: number, a: number}>} pixels
+ * @param {{r: number, g: number, b: number}} background
+ * @returns {Array<{r: number, g: number, b: number, a: number}>} opaque pixels
+ */
+export function flattenOver(pixels, background) {
+  return pixels.map(p => ({
+    r: Math.round((p.r * p.a + background.r * (255 - p.a)) / 255),
+    g: Math.round((p.g * p.a + background.g * (255 - p.a)) / 255),
+    b: Math.round((p.b * p.a + background.b * (255 - p.a)) / 255),
+    a: 255
+  }));
 }
 
 // Icon/Title versions the DS/DSi system menus accept (GBATEK "DS Cartridge
@@ -999,4 +1090,78 @@ export function decodeBanner(bannerBytes) {
     embeddedCrc: crcChecks[0].embedded,
     lostOnExport
   };
+}
+
+// Pico Launcher cover (pico-launcher BmpFileCover.cpp, BmpHeader.h): a
+// 128 x 96, 8 bpp BMP with a 40-byte BITMAPINFOHEADER and 256 colors. Only
+// the left 106 x 96 are shown. Rows must be stored bottom-up: Pico copies
+// them as-is and never flips a top-down file.
+export const COVER_SIZE = Object.freeze({ width: 106, height: 96 });
+const COVER_BMP_WIDTH = 128;
+const COVER_PALETTE_OFFSET = 14 + 40;
+const COVER_DATA_OFFSET = COVER_PALETTE_OFFSET + 256 * 4; // 1078
+
+/**
+ * Encodes a Pico Launcher cover BMP.
+ *
+ * @param {Array<{r: number, g: number, b: number}>} palette - Up to 256 colors,
+ *   snapped to RGB555 on write; missing entries are black
+ * @param {Uint8Array} indices - 106 x 96 palette indices, row-major from the top-left
+ * @returns {Uint8Array} The 13,366-byte cover.bmp
+ */
+export function encodeCoverBmp(palette, indices) {
+  const { width, height } = COVER_SIZE;
+  if (indices.length !== width * height) {
+    throw new RangeError(`Cover needs ${width * height} indices, got ${indices.length}`);
+  }
+  if (palette.length > 256) {
+    throw new RangeError(`Cover palette holds 256 colors, got ${palette.length}`);
+  }
+
+  const imageSize = COVER_BMP_WIDTH * height; // rows are 128 bytes, already 4-byte aligned
+  const bmp = new Uint8Array(COVER_DATA_OFFSET + imageSize);
+  const view = new DataView(bmp.buffer);
+
+  // BITMAPFILEHEADER
+  bmp[0] = 0x42; // 'B'
+  bmp[1] = 0x4D; // 'M'
+  view.setUint32(2, bmp.length, true);
+  view.setUint32(10, COVER_DATA_OFFSET, true);
+
+  // BITMAPINFOHEADER
+  view.setUint32(14, 40, true);
+  view.setInt32(18, COVER_BMP_WIDTH, true);
+  view.setInt32(22, height, true); // positive: bottom-up rows
+  view.setUint16(26, 1, true); // planes
+  view.setUint16(28, 8, true); // bits per pixel
+  view.setUint32(30, 0, true); // BI_RGB, no compression
+  view.setUint32(34, imageSize, true);
+  view.setInt32(38, 2835, true); // 72 dpi, like Pico's own covers
+  view.setInt32(42, 2835, true);
+  view.setUint32(46, 256, true); // colors used
+
+  // Palette (BGRx). The darkest entry fills the unused right-hand columns,
+  // which Pico still copies to VRAM (14 tiles, 112 px, per row).
+  let padIndex = 0;
+  let padLum = Infinity;
+  for (let k = 0; k < 256; k++) {
+    const c = palette[k] || { r: 0, g: 0, b: 0 };
+    const s = snapToRgb555(c.r, c.g, c.b);
+    const o = COVER_PALETTE_OFFSET + k * 4;
+    bmp[o] = s.b;
+    bmp[o + 1] = s.g;
+    bmp[o + 2] = s.r;
+    if (s.r + s.g + s.b < padLum) {
+      padLum = s.r + s.g + s.b;
+      padIndex = k;
+    }
+  }
+
+  // Pixels, bottom row first
+  for (let y = 0; y < height; y++) {
+    const row = COVER_DATA_OFFSET + (height - 1 - y) * COVER_BMP_WIDTH;
+    bmp.set(indices.subarray(y * width, (y + 1) * width), row);
+    bmp.fill(padIndex, row + width, row + COVER_BMP_WIDTH);
+  }
+  return bmp;
 }

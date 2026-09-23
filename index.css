@@ -327,7 +327,7 @@ body {
   outline: none;
 }
 
-#file-input {
+#file-input, #cover-file-input {
   display: none !important;
 }
 
@@ -949,7 +949,7 @@ body {
 }
 
 .footer-credit {
-  margin-top: var(--space-md);
+  margin-top: 0;
 }
 
 .footer-credit a {
@@ -1015,6 +1015,82 @@ code {
 .theme-btn.active {
   background-color: var(--violet);
   color: #ffffff !important;
+}
+
+/* Tool tabs: a full-width segmented control, same language as .pill-group */
+.tab-bar {
+  display: flex;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+  background-color: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--shape-full);
+}
+
+.tab-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--fg-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--shape-full);
+  cursor: pointer;
+  transition: background-color var(--motion-short3) var(--motion-easing-standard), color var(--motion-short3) var(--motion-easing-standard);
+}
+
+.tab-btn:hover {
+  color: var(--fg);
+  background-color: color-mix(in srgb, var(--bg) calc(100% - var(--state-hover)), var(--fg) var(--state-hover));
+}
+
+.tab-btn.active {
+  background-color: var(--fg);
+  color: var(--bg);
+}
+
+.tab-btn:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+}
+
+.tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+/* Cover preview: the 106 x 96 part Pico shows, drawn at 1x or 2x. */
+.cover-preview {
+  background-color: var(--bg-secondary);
+  border-radius: var(--shape-sm);
+  padding: var(--space-md);
+  display: flex;
+  justify-content: center;
+}
+
+#cover-preview-canvas {
+  width: 106px;
+  height: 96px;
+  background-color: #000000;
+  border: 1px solid var(--console-card-border);
+  border-radius: var(--shape-xs);
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  box-sizing: content-box;
+  transition: width var(--motion-medium1) var(--motion-easing-standard), height var(--motion-medium1) var(--motion-easing-standard);
+}
+
+.cover-preview.scale-2x #cover-preview-canvas {
+  width: 212px;
+  height: 192px;
+}
+
+.cover-placement {
+  line-height: 1.6;
+  text-align: left;
 }
 
 .hidden {

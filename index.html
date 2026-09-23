@@ -38,179 +38,285 @@
           </button>
         </div>
       </div>
-      <p>Create custom icons and menu titles for Nintendo DS homebrew&nbsp;ROMs.</p>
+      <p>Create custom icons and menu titles for Nintendo DS homebrew&nbsp;ROMs, and cover art for Pico&nbsp;Launcher.</p>
     </header>
 
-    <!-- Icon Specs Introduction -->
-    <div class="message-card info-card">
-      <div class="info-card-header">
-        <span class="info-card-title">Icon specs</span>
-      </div>
-      <p class="info-card-text">
-        DS icons are <strong>32 × 32 px</strong> with only <strong>16 colors</strong>,
-        and the first color is transparent.
-        This tool shrinks any image and reduces its colors for you, but starting with a
-        matching image gives sharper results. A 32 × 32 PNG with a 16-color palette is used as-is.
-      </p>
+    <div class="tab-bar" role="tablist" aria-label="Tool">
+      <button type="button" role="tab" id="tab-banner" class="tab-btn active" aria-selected="true" aria-controls="panel-banner">Banner</button>
+      <button type="button" role="tab" id="tab-cover" class="tab-btn" aria-selected="false" aria-controls="panel-cover" tabindex="-1">Pico cover</button>
     </div>
 
-    <!-- Icon -->
-    <section class="panel step-card">
-        <h2 class="step-title">Upload image or banner</h2>
+    <div id="panel-banner" class="tab-panel" role="tabpanel" aria-labelledby="tab-banner">
 
-        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload icon image or banner.bin file">
-          <input type="file" id="file-input" accept="image/*,.bin" tabindex="-1">
-          <div class="dropzone-content">
-            <span class="material-symbols-outlined upload-icon">cloud_upload</span>
-            <p id="dropzone-prompt" class="dropzone-text">Choose or drop an <strong class="highlight">icon image</strong> or <strong class="highlight">banner.bin</strong> here</p>
-            <div id="dropzone-preview-wrapper" class="dropzone-preview-wrapper">
-              <canvas id="crop-preview-canvas" width="96" height="96" class="dropzone-preview hidden"></canvas>
-              <p id="dropzone-filename" class="dropzone-filename hidden"></p>
+      <!-- Icon Specs Introduction -->
+      <div class="message-card info-card">
+        <div class="info-card-header">
+          <span class="info-card-title">Icon specs</span>
+        </div>
+        <p class="info-card-text">
+          DS icons are <strong>32 × 32 px</strong> with only <strong>16 colors</strong>,
+          and the first color is transparent.
+          This tool shrinks any image and reduces its colors for you, but starting with a
+          matching image gives sharper results. A 32 × 32 PNG with a 16-color palette is used as-is.
+        </p>
+      </div>
+
+      <!-- Icon -->
+      <section class="panel step-card">
+          <h2 class="step-title">Upload image or banner</h2>
+
+          <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload icon image or banner.bin file">
+            <input type="file" id="file-input" accept="image/*,.bin" tabindex="-1">
+            <div class="dropzone-content">
+              <span class="material-symbols-outlined upload-icon">cloud_upload</span>
+              <p id="dropzone-prompt" class="dropzone-text">Choose or drop an <strong class="highlight">icon image</strong> or <strong class="highlight">banner.bin</strong> here</p>
+              <div id="dropzone-preview-wrapper" class="dropzone-preview-wrapper">
+                <canvas id="crop-preview-canvas" width="96" height="96" class="dropzone-preview hidden"></canvas>
+                <p id="dropzone-filename" class="dropzone-filename hidden"></p>
+              </div>
             </div>
           </div>
+
+          <div id="bin-loaded-info" class="bin-loaded-card hidden" role="status">
+            <div id="bin-preview-slot" class="bin-preview-slot"></div>
+            <p id="bin-loaded-text"></p>
+            <button type="button" id="btn-remove-bin" class="remove-btn" aria-label="Remove the imported banner.bin and start fresh">
+              <span class="material-symbols-outlined">close</span>
+              Remove
+            </button>
+          </div>
+
+          <p class="upload-tip">Tip: Upload an image to turn it into an icon, or an existing <code>banner.bin</code> to edit its icon and text. A new upload replaces the current one.</p>
+          <p id="palette-note" class="upload-tip hidden" role="status">Using your image's own palette: its first color is transparent.</p>
+
+          <div id="error-box" class="message-card error-card hidden" role="alert">
+            <p id="error-message"></p>
+          </div>
+
+          <!-- Crop mode selector and adjustment panel -->
+          <div id="crop-control" class="crop-control hidden">
+            <div class="label-row">
+              <span class="crop-label">Layout mode</span>
+              <div class="pill-group">
+                <button type="button" id="btn-mode-crop" class="pill-btn active" aria-label="Crop a square from the image">Crop</button>
+                <button type="button" id="btn-mode-fit" class="pill-btn" aria-label="Fit the whole image, with transparent padding">Fit</button>
+              </div>
+            </div>
+          
+            <div id="cropper-wrapper" class="cropper-wrapper">
+              <div class="crop-editor-container">
+                <img id="crop-editor-img" class="crop-editor-img" alt="Source image for cropping">
+              </div>
+              <p class="help-text crop-help-text">Drag to move &bull; Use mouse wheel/pinch to zoom</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Transparency Handling Info Card -->
+        <div id="transparency-info" class="message-card info-card hidden" role="note">
+          <div class="info-card-header">
+            <span class="info-card-title">Transparency detected</span>
+          </div>
+          <p class="info-card-text">
+            Your icon has transparent pixels:
+            <br>&bull; Pixels <strong>under 50% opacity</strong> become transparent on the&nbsp;console.
+            <br>&bull; Pixels <strong>at 50% opacity or more</strong> become solid in their own color. Colors aren't mixed with a background, so edges don't get a light or dark&nbsp;halo.
+          </p>
         </div>
 
-        <div id="bin-loaded-info" class="bin-loaded-card hidden" role="status">
-          <div id="bin-preview-slot" class="bin-preview-slot"></div>
-          <p id="bin-loaded-text"></p>
-          <button type="button" id="btn-remove-bin" class="remove-btn" aria-label="Remove the imported banner.bin and start fresh">
-            <span class="material-symbols-outlined">close</span>
-            Remove
-          </button>
+        <!-- Title -->
+        <section class="panel step-card">
+          <h2 class="step-title">Banner options</h2>
+
+          <form class="metadata-form" onsubmit="return false;">
+            <div class="input-group">
+              <div class="label-row">
+                <label for="input-title">Game title</label>
+                <span class="tooltip-trigger" tabindex="0" data-tip="The game's name, shown on the first line. Keep it under 28 characters to avoid&nbsp;clipping." aria-label="Game title help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+              </div>
+              <input type="text" id="input-title" maxlength="40" placeholder="e.g. Space Raiders" autocomplete="off">
+            </div>
+
+            <div class="input-group">
+              <div class="label-row">
+                <label for="input-subtitle">Subtitle <span class="optional">(optional)</span></label>
+                <span class="tooltip-trigger" tabindex="0" data-tip="A second line, such as a version number, release date, or&nbsp;translator." aria-label="Subtitle help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+              </div>
+              <input type="text" id="input-subtitle" maxlength="45" placeholder="e.g. Version 1.0" autocomplete="off">
+            </div>
+
+            <div class="input-group">
+              <div class="label-row">
+                <label for="input-author">Author / Publisher <span class="optional">(optional)</span></label>
+                <span class="tooltip-trigger" tabindex="0" data-tip="The creator's name or publishing company displayed on the bottom&nbsp;line." aria-label="Author help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+              </div>
+              <input type="text" id="input-author" maxlength="40" placeholder="e.g. Jane Doe" autocomplete="off">
+            </div>
+
+            <div class="input-group">
+              <div class="label-row">
+                <span id="pixel-enhance-label" class="field-label">Pixel enhance</span>
+                <div class="inline-controls">
+                  <div class="pill-group" role="group" aria-labelledby="pixel-enhance-label">
+                    <button type="button" id="btn-pixelart-off" class="pill-btn active">Off</button>
+                    <button type="button" id="btn-pixelart-on" class="pill-btn">On</button>
+                  </div>
+                  <span class="tooltip-trigger" tabindex="0" data-tip="Dithers colors and boosts contrast/saturation so busy photos read closer to hand-drawn pixel art. Best for photos; leave off for already-clean pixel art." aria-label="Pixel enhance help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+                </div>
+              </div>
+            </div>
+          </form>
+        </section>
+
+        <!-- Preview & Export -->
+        <section class="panel preview-card">
+          <div class="step-title-row">
+            <h2 class="step-title">Preview</h2>
+            <div class="pill-group">
+              <button type="button" id="btn-scale-1x" class="pill-btn active" aria-label="1× actual size">1×</button>
+              <button type="button" id="btn-scale-2x" class="pill-btn" aria-label="2× double size">2×</button>
+            </div>
+          </div>
+
+          <!-- Console Mockup -->
+          <div class="console-mockup">
+            <div class="ds-menu-item">
+              <div class="ds-icon-slot">
+                <div class="ds-icon-canvas-bg"></div>
+                <canvas id="preview-canvas" width="256" height="256"></canvas>
+              </div>
+            
+              <div class="ds-text-slot">
+                <div id="mock-title" class="mock-title">Untitled game</div>
+                <div id="mock-subtitle" class="mock-subtitle"></div>
+                <div id="mock-author" class="mock-author"></div>
+              </div>
+            </div>
+          </div>
+        
+          <p class="help-text">
+            Your image is automatically resized to 32×32 and reduced to 16 colors, with the first one transparent.
+          </p>
+
+          <div class="divider"></div>
+
+          <!-- Action Buttons -->
+          <div class="action-row">
+            <button id="reset-btn" class="reset-btn" aria-label="Reset all inputs and file">Reset</button>
+            <button id="download-btn" class="download-btn" disabled>
+              Download banner.bin
+            </button>
+          </div>
+          <p class="help-text flashcart-note">
+            Changing a flashcart's banner? Stock DSi and 3DS consoles block carts with a changed banner.
+            Read the <a href="https://sanrax.github.io/flashcart-guides/tutorials/icon-change/" target="_blank" rel="noopener">flashcart banner guide</a> first.
+          </p>
+          <!-- Hidden canvas for 32x32 image processing -->
+          <canvas id="resize-canvas" width="32" height="32" style="display:none"></canvas>
+        </section>
+      <div class="app-footer">
+        <p>The downloaded <code>banner.bin</code> is your NDS banner data. Add it to your homebrew project before building, or flash it by following your flashcart&nbsp;guide.</p>
+      </div>
+    </div>
+
+    <div id="panel-cover" class="tab-panel hidden" role="tabpanel" aria-labelledby="tab-cover">
+      <div class="message-card info-card">
+        <div class="info-card-header">
+          <span class="info-card-title">Cover specs</span>
         </div>
+        <p class="info-card-text">
+          Pico Launcher shows covers at <strong>106 × 96 px</strong> with up to <strong>256 colors</strong>.
+          The file is a 128 × 96 BMP whose right 22 px stay hidden. This tool resizes any image
+          and writes that format for&nbsp;you.
+        </p>
+      </div>
 
-        <p class="upload-tip">Tip: Upload an image to turn it into an icon, or an existing <code>banner.bin</code> to edit its icon and text. A new upload replaces the current one.</p>
-        <p id="palette-note" class="upload-tip hidden" role="status">Using your image's own palette: its first color is transparent.</p>
-
-        <div id="error-box" class="message-card error-card hidden" role="alert">
-          <p id="error-message"></p>
+      <section class="panel step-card">
+        <h2 class="step-title">Upload image</h2>
+        <div id="cover-dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload cover image">
+          <input type="file" id="cover-file-input" accept="image/*" tabindex="-1">
+          <div class="dropzone-content">
+            <span class="material-symbols-outlined upload-icon">cloud_upload</span>
+            <p id="cover-dropzone-prompt" class="dropzone-text">Choose or drop a <strong class="highlight">cover image</strong> here</p>
+            <p id="cover-dropzone-filename" class="dropzone-filename hidden"></p>
+          </div>
         </div>
-
-        <!-- Crop mode selector and adjustment panel -->
-        <div id="crop-control" class="crop-control hidden">
+        <div id="cover-error-box" class="message-card error-card hidden" role="alert">
+          <p id="cover-error-message"></p>
+        </div>
+        <div id="cover-crop-control" class="crop-control hidden">
           <div class="label-row">
             <span class="crop-label">Layout mode</span>
             <div class="pill-group">
-              <button type="button" id="btn-mode-crop" class="pill-btn active" aria-label="Crop a square from the image">Crop</button>
-              <button type="button" id="btn-mode-fit" class="pill-btn" aria-label="Fit the whole image, with transparent padding">Fit</button>
+              <button type="button" id="cover-btn-mode-crop" class="pill-btn active" aria-label="Crop a 106 by 96 area from the image">Crop</button>
+              <button type="button" id="cover-btn-mode-fit" class="pill-btn" aria-label="Fit the whole image, padded with the background color">Fit</button>
             </div>
           </div>
-          
-          <div id="cropper-wrapper" class="cropper-wrapper">
+          <div id="cover-cropper-wrapper" class="cropper-wrapper">
             <div class="crop-editor-container">
-              <img id="crop-editor-img" class="crop-editor-img" alt="Source image for cropping">
+              <img id="cover-crop-editor-img" class="crop-editor-img" alt="Source image for cropping">
             </div>
             <p class="help-text crop-help-text">Drag to move &bull; Use mouse wheel/pinch to zoom</p>
           </div>
         </div>
       </section>
 
-      <!-- Transparency Handling Info Card -->
-      <div id="transparency-info" class="message-card info-card hidden" role="note">
-        <div class="info-card-header">
-          <span class="info-card-title">Transparency detected</span>
-        </div>
-        <p class="info-card-text">
-          Your icon has transparent pixels:
-          <br>&bull; Pixels <strong>under 50% opacity</strong> become transparent on the&nbsp;console.
-          <br>&bull; Pixels <strong>at 50% opacity or more</strong> become solid in their own color. Colors aren't mixed with a background, so edges don't get a light or dark&nbsp;halo.
-        </p>
-      </div>
-
-      <!-- Title -->
       <section class="panel step-card">
-        <h2 class="step-title">Banner options</h2>
-
-        <form class="metadata-form" onsubmit="return false;">
-          <div class="input-group">
-            <div class="label-row">
-              <label for="input-title">Game title</label>
-              <span class="tooltip-trigger" tabindex="0" data-tip="The game's name, shown on the first line. Keep it under 28 characters to avoid&nbsp;clipping." aria-label="Game title help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
-            </div>
-            <input type="text" id="input-title" maxlength="40" placeholder="e.g. Space Raiders" autocomplete="off">
-          </div>
-
-          <div class="input-group">
-            <div class="label-row">
-              <label for="input-subtitle">Subtitle <span class="optional">(optional)</span></label>
-              <span class="tooltip-trigger" tabindex="0" data-tip="A second line, such as a version number, release date, or&nbsp;translator." aria-label="Subtitle help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
-            </div>
-            <input type="text" id="input-subtitle" maxlength="45" placeholder="e.g. Version 1.0" autocomplete="off">
-          </div>
-
-          <div class="input-group">
-            <div class="label-row">
-              <label for="input-author">Author / Publisher <span class="optional">(optional)</span></label>
-              <span class="tooltip-trigger" tabindex="0" data-tip="The creator's name or publishing company displayed on the bottom&nbsp;line." aria-label="Author help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
-            </div>
-            <input type="text" id="input-author" maxlength="40" placeholder="e.g. Jane Doe" autocomplete="off">
-          </div>
-
-          <div class="input-group">
-            <div class="label-row">
-              <span id="pixel-enhance-label" class="field-label">Pixel enhance</span>
-              <div class="inline-controls">
-                <div class="pill-group" role="group" aria-labelledby="pixel-enhance-label">
-                  <button type="button" id="btn-pixelart-off" class="pill-btn active">Off</button>
-                  <button type="button" id="btn-pixelart-on" class="pill-btn">On</button>
-                </div>
-                <span class="tooltip-trigger" tabindex="0" data-tip="Dithers colors and boosts contrast/saturation so busy photos read closer to hand-drawn pixel art. Best for photos; leave off for already-clean pixel art." aria-label="Pixel enhance help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+        <h2 class="step-title">Cover options</h2>
+        <div class="input-group">
+          <div class="label-row">
+            <span id="cover-bg-label" class="field-label">Background</span>
+            <div class="inline-controls">
+              <div class="pill-group" role="group" aria-labelledby="cover-bg-label">
+                <button type="button" id="cover-btn-bg-black" class="pill-btn active">Black</button>
+                <button type="button" id="cover-btn-bg-white" class="pill-btn">White</button>
               </div>
+              <span class="tooltip-trigger" tabindex="0" data-tip="Pico Launcher covers can't be see-through. Transparent parts of your image, and the bars Fit adds, get this color. White suits logos; black suits photos and box&nbsp;art." aria-label="Background help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
             </div>
           </div>
-        </form>
+        </div>
+        <div class="input-group">
+          <div class="label-row">
+            <span id="cover-dither-label" class="field-label">Dither</span>
+            <div class="inline-controls">
+              <div class="pill-group" role="group" aria-labelledby="cover-dither-label">
+                <button type="button" id="cover-btn-dither-off" class="pill-btn">Off</button>
+                <button type="button" id="cover-btn-dither-on" class="pill-btn active">On</button>
+              </div>
+              <span class="tooltip-trigger" tabindex="0" data-tip="Mixes nearby colors in small dot patterns so gradients in photos and box art look smooth. Turn it off for flat artwork or pixel&nbsp;art." aria-label="Dither help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+            </div>
+          </div>
+        </div>
       </section>
 
-      <!-- Preview & Export -->
       <section class="panel preview-card">
         <div class="step-title-row">
           <h2 class="step-title">Preview</h2>
           <div class="pill-group">
-            <button type="button" id="btn-scale-1x" class="pill-btn active" aria-label="1× actual size">1×</button>
-            <button type="button" id="btn-scale-2x" class="pill-btn" aria-label="2× double size">2×</button>
+            <button type="button" id="cover-btn-scale-1x" class="pill-btn active" aria-label="1× actual size">1×</button>
+            <button type="button" id="cover-btn-scale-2x" class="pill-btn" aria-label="2× double size">2×</button>
           </div>
         </div>
-
-        <!-- Console Mockup -->
-        <div class="console-mockup">
-          <div class="ds-menu-item">
-            <div class="ds-icon-slot">
-              <div class="ds-icon-canvas-bg"></div>
-              <canvas id="preview-canvas" width="256" height="256"></canvas>
-            </div>
-            
-            <div class="ds-text-slot">
-              <div id="mock-title" class="mock-title">Untitled game</div>
-              <div id="mock-subtitle" class="mock-subtitle"></div>
-              <div id="mock-author" class="mock-author"></div>
-            </div>
-          </div>
+        <div id="cover-preview" class="cover-preview">
+          <canvas id="cover-preview-canvas" width="106" height="96"></canvas>
         </div>
-        
-        <p class="help-text">
-          Your image is automatically resized to 32×32 and reduced to 16 colors, with the first one transparent.
-        </p>
-
+        <p class="help-text">This is the part Pico Launcher shows, reduced to 256&nbsp;colors.</p>
         <div class="divider"></div>
-
-        <!-- Action Buttons -->
         <div class="action-row">
-          <button id="reset-btn" class="reset-btn" aria-label="Reset all inputs and file">Reset</button>
-          <button id="download-btn" class="download-btn" disabled>
-            Download banner.bin
-          </button>
+          <button id="cover-reset-btn" class="reset-btn" aria-label="Reset the cover image and options">Reset</button>
+          <button id="cover-download-btn" class="download-btn" disabled>Download cover.bmp</button>
         </div>
-        <p class="help-text flashcart-note">
-          Changing a flashcart's banner? Stock DSi and 3DS consoles block carts with a changed banner.
-          Read the <a href="https://sanrax.github.io/flashcart-guides/tutorials/icon-change/" target="_blank" rel="noopener">flashcart banner guide</a> first.
+        <p class="help-text cover-placement">
+          Put <code>cover.bmp</code> on your SD card in one of these places:
+          <br>&bull; Inside a folder, as <code>cover.bmp</code>: the cover for that&nbsp;folder.
+          <br>&bull; In <code>/_pico/covers/user/</code>, renamed to the game's file name plus <code>.bmp</code>, like <code>myGame.nds.bmp</code>.
+          <br>&bull; In <code>/_pico/covers/nds/</code> or <code>/_pico/covers/gba/</code>, renamed to the 4-letter game code, like <code>ABCD.bmp</code>.
         </p>
-        <!-- Hidden canvas for 32x32 image processing -->
-        <canvas id="resize-canvas" width="32" height="32" style="display:none"></canvas>
       </section>
+    </div>
 
     <!-- Instructions Footer -->
     <footer class="app-footer">
-      <p>The downloaded <code>banner.bin</code> is your NDS banner data. Add it to your homebrew project before building, or flash it by following your flashcart&nbsp;guide.</p>
       <p class="footer-credit">Made with <span aria-hidden="true">❤️</span> from Argentina by <a href="https://github.com/tasken" target="_blank" rel="noopener">@tasken</a> &middot; <a href="https://github.com/tasken/banner-maker" target="_blank" rel="noopener">Source on GitHub</a></p>
     </footer>
   </main>

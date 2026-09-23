@@ -1,4 +1,6 @@
 import { packBannerIcon, quantize, createImageSource, downscaleRegion, decodeBanner, decodeIndexedIcon, getBannerFormat, indicesToRgba, pixelsToRgba } from './core.js?v=__COMMIT_HASH__';
+import { createCanvas, readImagePixels, saveFile, setActiveButton } from './dom.js?v=__COMMIT_HASH__';
+import './cover.js?v=__COMMIT_HASH__';
 
 // DOM elements
 const dropzone = document.getElementById('dropzone');
@@ -67,6 +69,54 @@ btnThemeLight.addEventListener('click', () => applyTheme('light'));
 btnThemeSystem.addEventListener('click', () => applyTheme('system'));
 btnThemeDark.addEventListener('click', () => applyTheme('dark'));
 
+// Tool tabs (ARIA tabs pattern). The active tab lives in the URL hash so a
+// link can open the cover tool directly.
+const tabs = [
+  { tab: document.getElementById('tab-banner'), panel: document.getElementById('panel-banner'), hash: '' },
+  { tab: document.getElementById('tab-cover'), panel: document.getElementById('panel-cover'), hash: '#cover' }
+];
+
+// A panel's Cropper, if one is open (Cropper.js keeps it on its image).
+function panelCropper(panel) {
+  return panel.querySelector('.crop-editor-img')?.cropper;
+}
+
+function selectTab(index, { focus = false } = {}) {
+  tabs.forEach(({ tab, panel }, i) => {
+    const selected = i === index;
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    // A hidden Cropper measures its container as 0 px, and a window resize
+    // would scale its crop box down to nothing. Disabled, it skips resizes.
+    if (!selected) panelCropper(panel)?.disable();
+    panel.classList.toggle('hidden', !selected);
+  });
+  if (focus) tabs[index].tab.focus();
+  const { hash } = tabs[index];
+  if (location.hash !== hash) {
+    history.replaceState(null, '', hash || location.pathname + location.search);
+  }
+  // Catch up on any window resize the shown panel's Cropper sat out.
+  const cropper = panelCropper(tabs[index].panel);
+  if (cropper) {
+    cropper.enable();
+    cropper.resize();
+  }
+}
+
+tabs.forEach(({ tab }, i) => tab.addEventListener('click', () => selectTab(i)));
+tabs[0].tab.parentElement.addEventListener('keydown', (e) => {
+  const current = tabs.findIndex(({ tab }) => tab === document.activeElement);
+  if (current === -1) return;
+  const next = { ArrowRight: current + 1, ArrowLeft: current - 1, Home: 0, End: tabs.length - 1 }[e.key];
+  if (next === undefined) return;
+  e.preventDefault();
+  selectTab((next + tabs.length) % tabs.length, { focus: true });
+});
+window.addEventListener('hashchange', () => selectTab(location.hash === '#cover' ? 1 : 0));
+selectTab(location.hash === '#cover' ? 1 : 0);
+
 // Both previews scale 32x32 pixel art up, so keep pixels crisp. The canvases
 // are never resized, so this setting sticks.
 const resizeCtx = resizeCanvas.getContext('2d');
@@ -87,11 +137,6 @@ let cropperInstance = null;
 let layoutMode = 'crop'; // 'crop' or 'fit'
 let pixelArtEnhance = false;
 let downloadConfirmTimeout = null;
-
-// Longest side of the pixel copy the icon is sampled from. Keeps the canvas
-// under iOS Safari's 16,777,216 px limit (4096 x 4096). A 32x32 icon never
-// needs more: even a 1/128-wide crop still covers 32 source pixels.
-const MAX_SOURCE_SIDE = 4096;
 
 // Setup Event Listeners
 fileInput.addEventListener('change', handleFileSelect);
@@ -164,12 +209,6 @@ btnModeFit.addEventListener('click', () => {
     if (loadedImage) updateBannerData();
   });
 });
-
-// Segmented controls: exactly one button is active.
-function setActiveButton(active, inactive) {
-  active.classList.add('active');
-  inactive.classList.remove('active');
-}
 
 function setPreviewScale2x(enabled) {
   dsIconSlot.classList.toggle('scale-2x', enabled);
@@ -273,23 +312,6 @@ function exportLossHtml(lostOnExport) {
   if (lost.length === 0) return '';
   const list = lost.length === 1 ? lost[0] : `${lost.slice(0, -1).join(', ')} and ${lost[lost.length - 1]}`;
   return `<br>Downloads as a static NTR v1 banner, the kind flashcarts have room for, so ${list} won't be kept.`;
-}
-
-function createCanvas(width, height) {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  return canvas;
-}
-
-// Reads img's pixels once, downsized to MAX_SOURCE_SIDE on the longest side.
-function readImagePixels(img) {
-  const scale = Math.min(1, MAX_SOURCE_SIDE / Math.max(img.width, img.height));
-  const canvas = createCanvas(Math.max(1, Math.round(img.width * scale)), Math.max(1, Math.round(img.height * scale)));
-  const ctx = canvas.getContext('2d');
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return { rgba: ctx.getImageData(0, 0, canvas.width, canvas.height).data, width: canvas.width, height: canvas.height };
 }
 
 function hasTransparentPixel(rgba) {
@@ -535,17 +557,6 @@ function renderPreview(palette, indices) {
 function showIconPreview() {
   clearCanvas();
   previewCtx.drawImage(resizeCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
-}
-
-function saveFile(bytes, filename) {
-  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
 }
 
 function triggerDownload() {
