@@ -1,6 +1,6 @@
 import { fitAnimationSteps, packAnimatedBanner, packBannerIcon, planAnimation, quantize, createImageSource, downscaleRegion, downscaleRegionRect, decodeBanner, decodeIndexedIcon, getBannerFormat, indicesToRgba, pixelsToRgba } from './core.js?v=__COMMIT_HASH__';
 import { countImageFrames, createCanvas, drawCartridgePlaceholder, readAnimatedImageFrames, readImagePixels, saveFile, setActiveButton } from './dom.js?v=__COMMIT_HASH__';
-import { resetCover } from './cover.js?v=__COMMIT_HASH__';
+import { coverLauncherFromHash, resetCover, selectLauncher } from './cover.js?v=__COMMIT_HASH__';
 
 // DOM elements
 const dropzone = document.getElementById('dropzone');
@@ -79,11 +79,12 @@ btnThemeSystem.addEventListener('click', () => applyTheme('system'));
 btnThemeDark.addEventListener('click', () => applyTheme('dark'));
 
 // Tool tabs (ARIA tabs pattern). The active tab lives in the URL hash so a
-// link can open the cover tool directly. Leaving a tab resets it, so each
+// link can open the cover tool directly (#cover, or #cover-akmenu for the
+// AKMenu-Next placement help). Leaving a tab resets it, so each
 // visit starts fresh (and no Cropper ever sits in a hidden panel).
 const tabs = [
-  { tab: document.getElementById('tab-banner'), panel: document.getElementById('panel-banner'), hash: '', reset: () => resetAll() },
-  { tab: document.getElementById('tab-cover'), panel: document.getElementById('panel-cover'), hash: '#cover', reset: () => resetCover() }
+  { tab: document.getElementById('tab-banner'), panel: document.getElementById('panel-banner'), reset: () => resetAll() },
+  { tab: document.getElementById('tab-cover'), panel: document.getElementById('panel-cover'), reset: () => resetCover() }
 ];
 let currentTab = -1;
 
@@ -98,11 +99,14 @@ function selectTab(index, { focus = false } = {}) {
     panel.classList.toggle('hidden', !selected);
   });
   if (focus) tabs[index].tab.focus();
-  const { hash } = tabs[index];
-  if (location.hash !== hash) {
-    history.replaceState(null, '', hash || location.pathname + location.search);
+  if (index === 1) {
+    selectLauncher(coverLauncherFromHash(location.hash) ?? 'pico');
+  } else if (location.hash) {
+    history.replaceState(null, '', location.pathname + location.search);
   }
 }
+
+const tabFromHash = () => (coverLauncherFromHash(location.hash) ? 1 : 0);
 
 tabs.forEach(({ tab }, i) => tab.addEventListener('click', () => selectTab(i)));
 tabs[0].tab.parentElement.addEventListener('keydown', (e) => {
@@ -113,8 +117,8 @@ tabs[0].tab.parentElement.addEventListener('keydown', (e) => {
   e.preventDefault();
   selectTab((next + tabs.length) % tabs.length, { focus: true });
 });
-window.addEventListener('hashchange', () => selectTab(location.hash === '#cover' ? 1 : 0));
-selectTab(location.hash === '#cover' ? 1 : 0);
+window.addEventListener('hashchange', () => selectTab(tabFromHash()));
+selectTab(tabFromHash());
 
 // Both previews scale 32x32 pixel art up, so keep pixels crisp. The canvases
 // are never resized, so this setting sticks.

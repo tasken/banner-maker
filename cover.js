@@ -376,12 +376,23 @@ function triggerDownload() {
 
 drawPreviewPlaceholder();
 
-// Placement help: one launcher's folders at a time.
-launcherButtons.forEach(button => button.addEventListener('click', () => {
-  launcherButtons.forEach(other => {
-    const active = other === button;
-    other.classList.toggle('active', active);
-    other.setAttribute('aria-pressed', String(active));
-    document.getElementById(other.getAttribute('aria-controls')).classList.toggle('hidden', !active);
+// Placement help: one launcher's folders at a time. The choice lives in the
+// URL hash (#cover or #cover-akmenu) so a guide can link to either one.
+const launcherHashes = { pico: '#cover', ak: '#cover-akmenu' };
+
+export function coverLauncherFromHash(hash) {
+  return Object.keys(launcherHashes).find(name => launcherHashes[name] === hash);
+}
+
+export function selectLauncher(name) {
+  launcherButtons.forEach(button => {
+    const active = button.dataset.launcher === name;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+    document.getElementById(button.getAttribute('aria-controls')).classList.toggle('hidden', !active);
   });
-}));
+  const hash = launcherHashes[name];
+  if (location.hash !== hash) history.replaceState(null, '', hash);
+}
+
+launcherButtons.forEach(button => button.addEventListener('click', () => selectLauncher(button.dataset.launcher)));
