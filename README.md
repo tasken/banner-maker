@@ -6,13 +6,14 @@ Make the icon and title (`banner.bin`) that the DS and DSi menus show for your h
 
 ## How to use
 
-1. Drop an image, or an existing `banner.bin`, onto the upload area.
+1. Drop an image, an animated GIF/WebP, or an existing `banner.bin` onto the upload area.
 2. Pick `Crop` to choose a square, `Fit` to use the whole image with transparent padding, or `Fill` to use the largest centered square.
 3. Using a photo? Turn on `Pixel enhance` to boost contrast and dither colors so it reads like pixel art.
 4. Fill in the **Game title**, plus an optional **Subtitle** and **Author / Publisher**.
-5. Click `Download banner.bin`.
+5. Animated GIF/WebP files switch **Type** to `Animated` on their own, making an animated DSi banner; pick a **Speed**, or set **Type** to `Static` for a regular banner.
+6. Click `Download banner.bin`.
 
-Then add the file to your homebrew project before building, or flash it to your cart with the [flashcart banner guide](https://sanrax.github.io/flashcart-guides/tutorials/icon-change/).
+Add the file to your homebrew project before building. Use the static NTR v1 option for flashcarts and follow the [flashcart banner guide](https://sanrax.github.io/flashcart-guides/tutorials/icon-change/).
 
 > [!WARNING]
 > Stock DSi and 3DS consoles block flashcarts with a changed banner. Read the guide before flashing.
@@ -34,8 +35,10 @@ Then add the file to your homebrew project before building, or flash it to your 
 ## Features
 
 - **Any image in**: resized to 32×32 and reduced to 16 colors, the first one transparent. Colors are picked in the DS's 15-bit RGB555 space, weighted for how the eye sees them.
-- **Edit existing banners**: loads the icon and text from any `banner.bin` (NTR v1–v3 or DSi animated) and checks every checksum the DSi menu checks. Downloads are always static NTR v1, so Chinese/Korean titles and icon animations aren't kept.
-- **Flashcart-ready**: every download is a 2,112-byte NTR v1 banner with a valid CRC16, the format Cart-Flasher's `Write DS banner` accepts.
+- **Edit existing banners**: loads the icon and text from any `banner.bin` (NTR v1–v3 or DSi animated) and checks every checksum the DSi menu checks. Re-exporting an imported banner uses its static icon and text; Chinese/Korean titles and imported icon animations aren't kept.
+- **Animated DSi banners**: animated GIF/WebP files can be exported as DSi `0x0103` banners with up to 64 steps built from 8 of its frames, so repeating loops keep their full motion. The sequence loops on the DSi menu. Animated uploads pick this type automatically; every other image makes a static NTR v1 banner.
+- **Browser support**: animated export needs a browser with `ImageDecoder` (current Chrome or Edge) and an HTTPS page, like the online version; static banner export works everywhere.
+- **Flashcart-ready**: static downloads are 2,112-byte NTR v1 banners with a valid CRC16, the format Cart-Flasher's `Write DS banner` accepts.
 - **Clean edges**: pixels under 50% opacity become transparent, and the rest keep their own color, so edges don't get halos.
 - **Pico Launcher covers**: any image becomes a 128×96, 256-color BMP in the exact layout Pico Launcher reads, stored the right way up, with the hidden right-hand strip filled with the image's darkest color.
 - **Runs in your browser**: plain HTML, CSS and JavaScript, plus Cropper.js. Your files never leave your device.

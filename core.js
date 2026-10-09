@@ -1,8 +1,8 @@
 /**
  * Core business logic for DS Banner Maker.
  * DOM-independent pure functions for Node.js testing and Browser support.
- * Writes NTR v1 banner.bin files (2112 bytes / 0x840); reads NTR v1-v3 and
- * DSi animated banners.
+ * Writes static NTR v1 (2112 bytes / 0x840) and DSi animated (9152 bytes /
+ * 0x23C0) banner.bin files; reads NTR v1-v3 and DSi animated banners.
  * Also writes Pico Launcher cover.bmp files (128 x 96, 8 bpp).
  */
 
@@ -29,6 +29,7 @@ export function crc16(data, initial = 0xFFFF) {
 
 // Icon/Title layout (GBATEK "DS Cartridge Icon/Title", TwlSDK BannerHeader)
 const NTR_V1_SIZE = 0x840;
+const DSI_BANNER_SIZE = 0x23C0;
 const ICON_BITMAP = 0x20; // 512 bytes: 4bpp, 4x4 tiles of 8x8 pixels
 const ICON_BITMAP_SIZE = 0x200;
 const ICON_PALETTE = 0x220; // 16 RGB555 colors, index 0 = transparent
@@ -708,6 +709,305 @@ export function packBannerIcon(icon, title, subtitle, author) {
 
   writeU16(banner, 0x02, crc16(banner.subarray(ICON_BITMAP, NTR_V1_SIZE)));
   return banner;
+}
+
+// A DSi animated banner holds 8 bitmap/palette pairs and a 64-step sequence.
+export const ANIMATION_MAX_IMAGES = 8;
+export const ANIMATION_MAX_STEPS = 64;
+const ANIMATION_MAX_STEP_TICKS = 0xFF;
+
+/**
+ * Assembles a DSi/TWL animated banner (0x23C0 bytes / version 0x0103).
+ * images fill the 8 bitmap/palette pairs; steps play them in order, each for
+ * durationTicks 60 Hz frames, and loop after the last one. A step longer
+ * than 255 ticks takes several sequence entries; see fitAnimationSteps.
+ *
+ * @param {{palette: Array<{r: number, g: number, b: number}>, indices: Uint8Array}} fallbackIcon
+ * @param {Array<{palette: Array<{r: number, g: number, b: number}>, indices: Uint8Array}>} images 1 to 8 icons
+ * @param {Array<{image: number, durationTicks: number}>} steps at least 2
+ * @param {string} title
+ * @param {string} subtitle
+ * @param {string} author
+ * @returns {Uint8Array}
+ */
+export function packAnimatedBanner(fallbackIcon, images, steps, title, subtitle, author) {
+  if (!Array.isArray(images) || images.length < 1 || images.length > ANIMATION_MAX_IMAGES) {
+    throw new RangeError(`A DSi animated banner needs between 1 and ${ANIMATION_MAX_IMAGES} images`);
+  }
+  if (!Array.isArray(steps) || steps.length < 2) {
+    throw new RangeError('A DSi animated banner needs at least 2 steps');
+  }
+
+  const banner = new Uint8Array(DSI_BANNER_SIZE);
+  banner.set(packBannerIcon(fallbackIcon, title, subtitle, author));
+  writeU16(banner, 0x00, 0x0103);
+
+  const titleString = [title, subtitle, author]
+    .map(line => (line ? line.trim() : ''))
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 127);
+  const titleBytes = stringToUtf16Le(titleString);
+  for (let slot = 6; slot < 8; slot++) {
+    banner.set(titleBytes, TITLE_SLOTS + slot * TITLE_SLOT_SIZE);
+  }
+
+  images.forEach((icon, index) => {
+    if (!icon || icon.indices?.length !== 1024 || icon.palette?.length !== 16) {
+      throw new TypeError(`Animation image ${index + 1} must be a 32x32 indexed icon with a 16-color palette`);
+    }
+    banner.set(tileEncode(icon.indices), ANIM_BITMAPS + index * ICON_BITMAP_SIZE);
+    banner.set(paletteToRgb555(icon.palette), ANIM_PALETTES + index * ICON_PALETTE_SIZE);
+  });
+
+  const sequence = [];
+  steps.forEach(({ image, durationTicks }, index) => {
+    if (!Number.isInteger(image) || image < 0 || image >= images.length) {
+      throw new RangeError(`Animation step ${index + 1} uses a missing image`);
+    }
+    // Bitmap and palette slot go in bits 8-10 and 11-13.
+    const flags = (image << 8) | (image << 11);
+    if (!Number.isInteger(durationTicks) || durationTicks < 1) {
+      throw new RangeError(`Animation step ${index + 1} must last at least 1/60 second`);
+    }
+    for (let remaining = durationTicks; remaining > 0; remaining -= ANIMATION_MAX_STEP_TICKS) {
+      if (sequence.length >= ANIMATION_MAX_STEPS) {
+        throw new RangeError('The animation is too long for a DSi banner sequence');
+      }
+      sequence.push(Math.min(remaining, ANIMATION_MAX_STEP_TICKS) | flags);
+    }
+  });
+
+  sequence.forEach((token, index) => writeU16(banner, ANIM_SEQUENCE + index * 2, token));
+  writeU16(banner, 0x02, crc16(banner.subarray(ICON_BITMAP, NTR_V1_SIZE)));
+  writeU16(banner, 0x04, crc16(banner.subarray(ICON_BITMAP, 0x940)));
+  writeU16(banner, 0x06, crc16(banner.subarray(ICON_BITMAP, 0xA40)));
+  writeU16(banner, 0x08, crc16(banner.subarray(ANIM_BITMAPS, DSI_BANNER_SIZE)));
+  return banner;
+}
+
+// How different two 32x32 frames look: summed squared RGB distance, with a
+// see-through pixel counted as far from any visible one. Pixels under 50%
+// opacity are see-through, as in the banner itself.
+function frameDistance(a, b) {
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) {
+    const pa = a[i];
+    const pb = b[i];
+    const va = pa.a >= 128;
+    const vb = pb.a >= 128;
+    if (va !== vb) {
+      sum += 3 * 255 * 255;
+    } else if (va) {
+      const dr = pa.r - pb.r;
+      const dg = pa.g - pb.g;
+      const db = pa.b - pb.b;
+      sum += dr * dr + dg * dg + db * db;
+    }
+  }
+  return sum;
+}
+
+/**
+ * Picks up to 8 frames that best cover an animation and maps every frame to
+ * one of them, so a long animation plays as many steps over 8 images.
+ *
+ * - 8 or fewer different frames: every frame keeps its own image (exact).
+ * - Most frames come back later (a loop played twice, a swing back and
+ *   forth): frames share the closest of 8 representative images.
+ * - Otherwise (a zoom, pan or turn): the loop is cut into 8 slices of equal
+ *   motion and time, each showing its middle frame. Steps stay about the
+ *   same length, so steady motion doesn't stutter.
+ *
+ * Image 0 is always frame 0, the picture a DS (and the static icon) shows.
+ *
+ * @param {Array<Array<{r: number, g: number, b: number, a: number}>>} frames 32x32 pixels per frame
+ * @param {number[]} durations display time of each frame, in any unit
+ * @param {number} [maxImages=8]
+ * @returns {{images: number[], steps: number[]}} images are frame indexes to
+ *   keep; steps[i] is the images entry frame i plays as.
+ */
+export function planAnimation(frames, durations, maxImages = ANIMATION_MAX_IMAGES) {
+  const count = frames.length;
+  const dist = Array.from({ length: count }, () => new Float64Array(count));
+  for (let i = 0; i < count; i++) {
+    for (let j = i + 1; j < count; j++) {
+      dist[i][j] = dist[j][i] = frameDistance(frames[i], frames[j]);
+    }
+  }
+
+  // Frames that look the same share one image.
+  const unique = [];
+  for (let i = 0; i < count; i++) {
+    if (!unique.some(u => dist[u][i] === 0)) unique.push(i);
+  }
+  if (unique.length <= maxImages) return { images: unique, steps: nearestImages(dist, unique) };
+
+  return repeatShare(dist, durations) >= 0.5
+    ? planByReuse(dist, durations, unique, maxImages)
+    : planBySlices(dist, durations, maxImages);
+}
+
+function nearestImages(dist, images) {
+  return dist.map((_, i) => {
+    let nearest = 0;
+    for (let m = 1; m < images.length; m++) {
+      if (dist[images[m]][i] < dist[images[nearest]][i]) nearest = m;
+    }
+    return nearest;
+  });
+}
+
+// Share of play time spent on frames that come back later in the loop: a
+// frame at least 3 frames away (wrapping around) that is closer than half
+// the typical change between neighbouring frames. dist holds squared values.
+function repeatShare(dist, durations) {
+  const count = dist.length;
+  const neighbour = dist.map((row, i) => row[(i + 1) % count]).sort((a, b) => a - b);
+  const limit = neighbour[Math.floor(count / 2)] / 4;
+  let repeated = 0;
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    total += durations[i];
+    for (let j = 0; j < count; j++) {
+      const gap = Math.min(Math.abs(i - j), count - Math.abs(i - j));
+      if (gap >= 3 && dist[i][j] <= limit) {
+        repeated += durations[i];
+        break;
+      }
+    }
+  }
+  return total > 0 ? repeated / total : 0;
+}
+
+// Farthest-point start from frame 0, then k-medoids refinement weighted by
+// how long each frame is on screen.
+function planByReuse(dist, durations, unique, maxImages) {
+  const count = dist.length;
+  let medoids = [0];
+  while (medoids.length < maxImages) {
+    let best = -1;
+    let bestScore = -1;
+    for (const i of unique) {
+      const score = durations[i] * Math.min(...medoids.map(m => dist[m][i]));
+      if (score > bestScore) {
+        bestScore = score;
+        best = i;
+      }
+    }
+    medoids.push(best);
+  }
+  for (let round = 0; round < 10; round++) {
+    const assigned = nearestImages(dist, medoids);
+    let changed = false;
+    medoids = medoids.map((medoid, m) => {
+      if (m === 0) return medoid;
+      let best = medoid;
+      let bestCost = Infinity;
+      for (let candidate = 0; candidate < count; candidate++) {
+        if (assigned[candidate] !== m) continue;
+        let cost = 0;
+        for (let i = 0; i < count; i++) {
+          if (assigned[i] === m) cost += durations[i] * dist[candidate][i];
+        }
+        if (cost < bestCost) {
+          bestCost = cost;
+          best = candidate;
+        }
+      }
+      if (best !== medoid) changed = true;
+      return best;
+    });
+    if (!changed) break;
+  }
+  return { images: medoids, steps: nearestImages(dist, medoids) };
+}
+
+// Lays the loop on a circle where each frame takes up half its share of
+// play time plus half its share of motion (the change to the next frame),
+// then cuts it into equal slices with slice 0 centred on frame 0. Each
+// slice shows its middle frame. Half time, half motion keeps every slice
+// within about twice the average length while still spending more images
+// where the picture changes most.
+function planBySlices(dist, durations, maxImages) {
+  const count = dist.length;
+  const motion = dist.map((row, i) => Math.sqrt(row[(i + 1) % count]));
+  const totalMotion = motion.reduce((sum, m) => sum + m, 0) || 1;
+  const totalTime = durations.reduce((sum, d) => sum + d, 0);
+  const centres = [];
+  let length = 0;
+  for (let i = 0; i < count; i++) {
+    const time = durations[i] / totalTime / 2;
+    centres.push(length + time / 2);
+    length += time + motion[i] / totalMotion / 2;
+  }
+  const origin = centres[0];
+  const offset = i => ((centres[i] - origin) / length + 0.5 / maxImages + 1) % 1;
+  const slices = centres.map((_, i) => Math.min(maxImages - 1, Math.floor(offset(i) * maxImages)));
+
+  const sliceImage = new Map();
+  const images = [];
+  for (let slice = 0; slice < maxImages; slice++) {
+    let best = -1;
+    let bestGap = Infinity;
+    for (let i = 0; i < count; i++) {
+      if (slices[i] !== slice) continue;
+      const gap = Math.abs(offset(i) - (slice + 0.5) / maxImages);
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = i;
+      }
+    }
+    if (best >= 0) {
+      sliceImage.set(slice, images.length);
+      images.push(best);
+    }
+  }
+  return { images, steps: slices.map(slice => sliceImage.get(slice)) };
+}
+
+/**
+ * Fits steps into the 64-entry DSi sequence. Back-to-back steps that show
+ * the same image are joined; while the sequence is still too long, the
+ * shortest step is folded into the one before it. Durations may be
+ * fractional; the result is whole ticks with the total time kept.
+ *
+ * @param {Array<{image: number, durationTicks: number}>} steps
+ * @returns {Array<{image: number, durationTicks: number}>}
+ */
+export function fitAnimationSteps(steps) {
+  const joined = [];
+  for (const step of steps) {
+    const last = joined[joined.length - 1];
+    if (last && last.image === step.image) last.durationTicks += step.durationTicks;
+    else joined.push({ ...step });
+  }
+  const entries = list => list.reduce((sum, s) => sum + Math.ceil(s.durationTicks / ANIMATION_MAX_STEP_TICKS), 0);
+  while (joined.length > 2 && entries(joined) > ANIMATION_MAX_STEPS) {
+    let shortest = 1;
+    for (let i = 2; i < joined.length; i++) {
+      if (joined[i].durationTicks < joined[shortest].durationTicks) shortest = i;
+    }
+    joined[shortest - 1].durationTicks += joined[shortest].durationTicks;
+    joined.splice(shortest, 1);
+    if (joined[shortest] && joined[shortest].image === joined[shortest - 1].image) {
+      joined[shortest - 1].durationTicks += joined[shortest].durationTicks;
+      joined.splice(shortest, 1);
+    }
+  }
+  // Round on the running total so short steps don't drift the timing.
+  let elapsed = 0;
+  let rounded = 0;
+  joined.forEach(step => {
+    elapsed += step.durationTicks;
+    const end = Math.max(rounded + 1, Math.round(elapsed));
+    step.durationTicks = end - rounded;
+    rounded = end;
+  });
+  // Two very long steps can still overflow; cap them evenly.
+  const cap = Math.floor(ANIMATION_MAX_STEPS / joined.length) * ANIMATION_MAX_STEP_TICKS;
+  joined.forEach(step => { step.durationTicks = Math.min(step.durationTicks, cap); });
+  return joined;
 }
 
 /**

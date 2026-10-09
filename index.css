@@ -315,6 +315,11 @@ body {
   color: var(--bg);
 }
 
+.help-text.banner-format-help {
+  margin: var(--space-sm) 0 0;
+  text-align: left;
+}
+
 /* Dropzone */
 .dropzone {
   border: 2px dashed var(--violet-border);
@@ -413,6 +418,19 @@ body {
 .bin-preview-slot {
   flex-shrink: 0;
   line-height: 0;
+}
+
+/* Animated uploads: the browser plays the GIF/WebP, cropped like the canvas. */
+.crop-preview-anim {
+  position: relative;
+  overflow: hidden;
+}
+
+.crop-preview-anim img {
+  position: absolute;
+  max-width: none;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
 .bin-preview-slot .dropzone-preview {

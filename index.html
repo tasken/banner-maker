@@ -72,6 +72,7 @@
               <p id="dropzone-prompt" class="dropzone-text">Choose or drop an <strong class="highlight">icon image</strong> or <strong class="highlight">banner.bin</strong> here</p>
               <div id="dropzone-preview-wrapper" class="dropzone-preview-wrapper">
                 <canvas id="crop-preview-canvas" width="96" height="96" class="dropzone-preview hidden"></canvas>
+                <div id="crop-preview-anim" class="dropzone-preview crop-preview-anim hidden"><img id="crop-preview-anim-img" alt=""></div>
                 <p id="dropzone-filename" class="dropzone-filename hidden"></p>
               </div>
             </div>
@@ -86,7 +87,7 @@
             </button>
           </div>
 
-          <p class="upload-tip">Tip: Upload an image to turn it into an icon, or an existing <code>banner.bin</code> to edit its icon and text. A new upload replaces the current one.</p>
+          <p class="upload-tip">Upload an image, an animated GIF or WebP for DSi output, or a <code>banner.bin</code> to edit its icon and text. A new upload replaces the current one.</p>
           <p id="palette-note" class="upload-tip hidden" role="status">Using your image's own palette: its first color is transparent.</p>
 
           <div id="error-box" class="message-card error-card hidden" role="alert">
@@ -154,6 +155,34 @@
               <input type="text" id="input-author" maxlength="40" placeholder="e.g. Jane Doe" autocomplete="off">
             </div>
 
+            <div id="banner-format-group" class="input-group hidden">
+              <div class="label-row">
+                <span id="banner-format-label" class="field-label">Type</span>
+                <div class="inline-controls">
+                  <div class="pill-group" role="group" aria-labelledby="banner-format-label">
+                    <button type="button" id="btn-format-static" class="pill-btn active" aria-pressed="true">Static</button>
+                    <button type="button" id="btn-format-animated" class="pill-btn" aria-pressed="false">Animated</button>
+                  </div>
+                  <span class="tooltip-trigger" tabindex="0" data-tip="Static works on every DS and DSi, and on flashcarts. Animated plays your GIF or WebP in up to 64 steps built from 8 of its frames, and loops on the DSi menu; a DS shows the first frame." aria-label="Banner type help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+                </div>
+              </div>
+              <p id="animation-status" class="help-text banner-format-help hidden" role="status" aria-live="polite"></p>
+            </div>
+
+            <div id="animation-speed-group" class="input-group hidden">
+              <div class="label-row">
+                <span id="animation-speed-label" class="field-label">Speed</span>
+                <div class="inline-controls">
+                  <div class="pill-group" role="group" aria-labelledby="animation-speed-label">
+                    <button type="button" class="pill-btn" data-speed="0.5" aria-pressed="false">Slow</button>
+                    <button type="button" class="pill-btn active" data-speed="1" aria-pressed="true">Normal</button>
+                    <button type="button" class="pill-btn" data-speed="2" aria-pressed="false">Fast</button>
+                  </div>
+                  <span class="tooltip-trigger" tabindex="0" data-tip="Normal keeps your file's own timing. Slow plays at half speed, Fast at double&nbsp;speed." aria-label="Speed help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+                </div>
+              </div>
+            </div>
+
             <div class="input-group">
               <div class="label-row">
                 <span id="pixel-enhance-label" class="field-label">Pixel enhance</span>
@@ -196,7 +225,7 @@
           </div>
         
           <p class="help-text">
-            Your image is automatically resized to 32×32 and reduced to 16 colors, with the first one transparent.
+            Each frame is resized to 32×32 and reduced to 16 colors, with the first one transparent.
           </p>
 
           <div class="divider"></div>

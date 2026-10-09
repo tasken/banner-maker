@@ -1,5 +1,5 @@
-import { packBannerIcon, quantize, createImageSource, downscaleRegion, decodeBanner, decodeIndexedIcon, getBannerFormat, indicesToRgba, pixelsToRgba } from './core.js?v=__COMMIT_HASH__';
-import { createCanvas, drawCartridgePlaceholder, readImagePixels, saveFile, setActiveButton } from './dom.js?v=__COMMIT_HASH__';
+import { fitAnimationSteps, packAnimatedBanner, packBannerIcon, planAnimation, quantize, createImageSource, downscaleRegion, downscaleRegionRect, decodeBanner, decodeIndexedIcon, getBannerFormat, indicesToRgba, pixelsToRgba } from './core.js?v=__COMMIT_HASH__';
+import { countImageFrames, createCanvas, drawCartridgePlaceholder, readAnimatedImageFrames, readImagePixels, saveFile, setActiveButton } from './dom.js?v=__COMMIT_HASH__';
 import { resetCover } from './cover.js?v=__COMMIT_HASH__';
 
 // DOM elements
@@ -16,9 +16,17 @@ const previewCanvas = document.getElementById('preview-canvas');
 const resizeCanvas = document.getElementById('resize-canvas');
 const downloadBtn = document.getElementById('download-btn');
 const resetBtn = document.getElementById('reset-btn');
+const bannerFormatGroup = document.getElementById('banner-format-group');
+const btnFormatStatic = document.getElementById('btn-format-static');
+const btnFormatAnimated = document.getElementById('btn-format-animated');
+const animationSpeedGroup = document.getElementById('animation-speed-group');
+const speedButtons = [...animationSpeedGroup.querySelectorAll('[data-speed]')];
+const animationStatus = document.getElementById('animation-status');
 
 // Crop & Layout mode elements
 const cropPreviewCanvas = document.getElementById('crop-preview-canvas');
+const cropPreviewAnim = document.getElementById('crop-preview-anim');
+const cropPreviewAnimImg = document.getElementById('crop-preview-anim-img');
 const dropzonePreviewWrapper = document.getElementById('dropzone-preview-wrapper');
 const cropControl = document.getElementById('crop-control');
 const cropperWrapper = document.getElementById('cropper-wrapper');
@@ -129,6 +137,17 @@ let layoutMode = 'crop'; // 'crop', 'fit' or 'fill'
 let layoutChosen = false; // once the user picks Crop or Fit, new images keep it
 let pixelArtEnhance = false;
 let downloadConfirmTimeout = null;
+let imageLoadToken = 0;
+let animationDecodeToken = 0;
+let animationProcessToken = 0;
+let animationProcessTimeout = null;
+let animationPreviewTimeout = null;
+let animationFile = null;
+let animationFrames = null;
+let animationImages = []; // up to 8 icons
+let animationSteps = []; // { image, durationTicks } per source frame, at normal speed
+let animatedOutput = false;
+let animationSpeed = 1;
 
 // Setup Event Listeners
 fileInput.addEventListener('change', handleFileSelect);
@@ -166,13 +185,16 @@ dropzone.addEventListener('drop', (e) => {
   input.addEventListener('input', () => {
     updateMockupText();
     if (loadedImage) {
-      updateBannerData();
+      updateBannerData({ processAnimation: false });
     }
   });
 });
 
 downloadBtn.addEventListener('click', triggerDownload);
 resetBtn.addEventListener('click', resetAll);
+btnFormatStatic.addEventListener('click', () => setAnimatedOutput(false));
+btnFormatAnimated.addEventListener('click', () => setAnimatedOutput(true));
+speedButtons.forEach(button => button.addEventListener('click', () => setAnimationSpeed(Number(button.dataset.speed))));
 
 // Lets the user discard the imported banner.bin (icon + text) entirely and
 // go back to a blank slate, rather than being forced to pick a replacement.
@@ -220,6 +242,112 @@ function setLayoutMode(mode) {
 function setPixelArtEnhance(enabled) {
   pixelArtEnhance = enabled;
   setActiveButton(enabled ? btnPixelArtOn : btnPixelArtOff, enabled ? btnPixelArtOff : btnPixelArtOn);
+}
+
+function setAnimationSpeed(speed) {
+  animationSpeed = speed;
+  speedButtons.forEach(button => {
+    const active = Number(button.dataset.speed) === speed;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  if (animatedOutput && animationImages.length) {
+    stopAnimationPreview();
+    showAnimationFrame(0);
+  }
+}
+
+// The steps the banner plays at the chosen speed, fitted to its sequence.
+function playbackSteps() {
+  return fitAnimationSteps(animationSteps.map(({ image, durationTicks }) => ({
+    image,
+    durationTicks: durationTicks / animationSpeed
+  })));
+}
+
+function setAnimatedOutput(enabled) {
+  animatedOutput = enabled;
+  animationSpeedGroup.classList.toggle('hidden', !enabled);
+  setActiveButton(enabled ? btnFormatAnimated : btnFormatStatic, enabled ? btnFormatStatic : btnFormatAnimated);
+  btnFormatStatic.setAttribute('aria-pressed', String(!enabled));
+  btnFormatAnimated.setAttribute('aria-pressed', String(enabled));
+  clearError();
+
+  if (!enabled) {
+    animationDecodeToken++;
+    animationProcessToken++;
+    clearTimeout(animationProcessTimeout);
+    animationProcessTimeout = null;
+    stopAnimationPreview();
+    animationStatus.textContent = '';
+    animationStatus.classList.add('hidden');
+    downloadBtn.disabled = !currentPixels;
+    if (currentPixels) {
+      const icon = currentIcon();
+      renderPreview(icon.palette, icon.indices);
+    }
+    return;
+  }
+
+  if (animationFrames) {
+    scheduleAnimationProcessing();
+    return;
+  }
+
+  if (!animationFile) {
+    setAnimatedOutput(false);
+    return;
+  }
+
+  const token = ++animationDecodeToken;
+  downloadBtn.disabled = true;
+  // Only long animations take long enough to need a progress line.
+  readAnimatedImageFrames(animationFile, (current, total) => {
+    if (token === animationDecodeToken && current % 16 === 0) {
+      animationStatus.textContent = `Reading animation frames (${current} of ${total})...`;
+      animationStatus.classList.remove('hidden');
+    }
+  }).then(frames => {
+    if (token !== animationDecodeToken || !animatedOutput) return;
+    if (frames.length < 2) throw new Error('This file contains only one frame. Choose an animated GIF or WebP.');
+    animationFrames = frames.map(frame => ({
+      ...frame,
+      source: createImageSource(frame.rgba, frame.width, frame.height)
+    }));
+    scheduleAnimationProcessing();
+  }).catch(err => {
+    if (token !== animationDecodeToken) return;
+    console.error(err);
+    setAnimatedOutput(false);
+    showError(escapeHtml(err.message || 'The animation could not be read.'));
+  });
+}
+
+function clearAnimationState() {
+  imageLoadToken++;
+  animationDecodeToken++;
+  animationProcessToken++;
+  clearTimeout(animationProcessTimeout);
+  animationProcessTimeout = null;
+  stopAnimationPreview();
+  animationFile = null;
+  animationFrames = null;
+  animationImages = [];
+  animationSteps = [];
+  animatedOutput = false;
+  bannerFormatGroup.classList.add('hidden');
+  animationSpeedGroup.classList.add('hidden');
+  hideAnimatedCropPreview();
+  animationStatus.textContent = '';
+  animationStatus.classList.add('hidden');
+  setActiveButton(btnFormatStatic, btnFormatAnimated);
+  btnFormatStatic.setAttribute('aria-pressed', 'true');
+  btnFormatAnimated.setAttribute('aria-pressed', 'false');
+}
+
+function hideAnimatedCropPreview() {
+  cropPreviewAnim.classList.add('hidden');
+  cropPreviewAnimImg.removeAttribute('src');
 }
 
 function initCropper() {
@@ -298,7 +426,7 @@ function crcBadgeHtml(crcChecks) {
   return `<span class="crc-badge warning" title="${details}. The DSi menu hides banners with a wrong checksum. Downloading writes a correct one.">CRC mismatch (fixed when you download)</span>`;
 }
 
-// Downloads are always static NTR v1 banners, so name what won't carry over.
+// Re-exporting an imported banner as static NTR v1 names what won't carry over.
 function exportLossHtml(lostOnExport) {
   const lost = [];
   if (lostOnExport.translations) lost.push('the separate title for each language (one title is used for all)');
@@ -332,6 +460,7 @@ function setLoadedImage(img, src, rgba, width, height, icon = null) {
 }
 
 function unloadImage() {
+  clearAnimationState();
   loadedImage = null;
   indexedIcon = null;
   paletteNote.classList.add('hidden');
@@ -347,17 +476,24 @@ function handleFileSelect() {
   const file = fileInput.files[0];
   if (!file) return;
 
+  clearAnimationState();
+  const token = imageLoadToken;
   if (file.name.toLowerCase().endsWith('.bin')) {
-    handleBinSelect(file);
+    handleBinSelect(file, token);
     return;
   }
+
+  animationFile = isAnimatedImageFile(file) ? file : null;
 
   // Read and load image
   const reader = new FileReader();
   reader.onload = async function(event) {
+    if (token !== imageLoadToken) return;
     const icon = file.type === 'image/png' ? await decodeIndexedIcon(new Uint8Array(await file.arrayBuffer())) : null;
+    if (token !== imageLoadToken) return;
     const img = new Image();
     img.onload = function() {
+      if (token !== imageLoadToken) return;
       const { rgba, width, height } = readImagePixels(img);
       setLoadedImage(img, event.target.result, rgba, width, height, icon);
 
@@ -370,7 +506,11 @@ function handleFileSelect() {
       // import, so make sure it's back in its home slot in the dropzone.
       dropzonePreviewWrapper.insertBefore(cropPreviewCanvas, dropzoneFilename);
       dropzonePrompt.classList.add('hidden');
-      cropPreviewCanvas.classList.remove('hidden');
+      // A canvas only ever draws an animation's first frame, so animated
+      // uploads preview in an <img>, which the browser plays.
+      if (animationFile) cropPreviewAnimImg.src = event.target.result;
+      cropPreviewAnim.classList.toggle('hidden', !animationFile);
+      cropPreviewCanvas.classList.toggle('hidden', Boolean(animationFile));
       dropzoneFilename.textContent = `✓ ${file.name}`;
       dropzoneFilename.classList.remove('hidden');
 
@@ -380,19 +520,46 @@ function handleFileSelect() {
       binLoadedText.textContent = '';
 
       initCropper();
+      if (animationFile) detectAnimation(file, token);
     };
     img.onerror = function() {
-      showError("This image couldn't be opened. Try a PNG, JPG or WebP file.");
+      if (token !== imageLoadToken) return;
+      showError("This image couldn't be opened. Try a PNG, JPG, GIF or WebP file.");
       unloadImage();
     };
     img.src = event.target.result;
   };
+  reader.onerror = function() {
+    if (token !== imageLoadToken) return;
+    showError("This image couldn't be read. Try a different file.");
+    unloadImage();
+  };
   reader.readAsDataURL(file);
 }
 
-function handleBinSelect(file) {
+// Animated uploads switch to the Animated type on their own; a still GIF or
+// WebP hides the Type option. If this browser can't count frames, the option
+// stays on Static, and choosing Animated explains why it can't work.
+async function detectAnimation(file, token) {
+  const frames = await countImageFrames(file);
+  if (token !== imageLoadToken || animationFile !== file) return;
+  if (frames === 1) {
+    animationFile = null;
+    return;
+  }
+  bannerFormatGroup.classList.remove('hidden');
+  if (frames >= 2) setAnimatedOutput(true);
+}
+
+function isAnimatedImageFile(file) {
+  const type = file.type.toLowerCase();
+  return type === 'image/gif' || type === 'image/webp' || /\.(gif|webp)$/i.test(file.name);
+}
+
+function handleBinSelect(file, token) {
   const reader = new FileReader();
   reader.onload = function(event) {
+    if (token !== imageLoadToken) return;
     try {
       const bytes = new Uint8Array(event.target.result);
 
@@ -421,6 +588,7 @@ function handleBinSelect(file) {
 
       const img = new Image();
       img.onload = function() {
+        if (token !== imageLoadToken) return;
         setLoadedImage(img, dataURL, rgba, 32, 32);
 
         // Already a 32x32 square, so fit it as-is
@@ -446,6 +614,7 @@ function handleBinSelect(file) {
       };
 
       img.onerror = function() {
+        if (token !== imageLoadToken) return;
         showError("The banner's icon couldn't be loaded. Try the file again, or upload a different <code>banner.bin</code>.");
       };
 
@@ -455,6 +624,10 @@ function handleBinSelect(file) {
       console.error(err);
       showError("This <code>banner.bin</code> couldn't be read. It may be damaged. Upload a different file.");
     }
+  };
+  reader.onerror = function() {
+    if (token !== imageLoadToken) return;
+    showError("This <code>banner.bin</code> couldn't be read. Upload a different file.");
   };
   reader.readAsArrayBuffer(file);
 }
@@ -492,6 +665,70 @@ function scheduleProcessImage() {
   });
 }
 
+function scheduleAnimationProcessing() {
+  if (!animatedOutput || !animationFrames || !currentPixels || !loadedImage) return;
+  clearTimeout(animationProcessTimeout);
+  animationProcessToken++;
+  const token = animationProcessToken;
+  stopAnimationPreview();
+  downloadBtn.disabled = true;
+
+  animationProcessTimeout = setTimeout(() => {
+    animationProcessTimeout = null;
+    if (token !== animationProcessToken || !animatedOutput) return;
+    try {
+      const region = layoutMode === 'crop' ? cropRegion() : layoutMode === 'fill' ? fillRegion() : fitRegion();
+      if (!region) return;
+      const framePixels = animationFrames.map(({ source, width, height }) => {
+        const scaleX = width / loadedImage.width;
+        const scaleY = height / loadedImage.height;
+        return downscaleRegionRect(
+          source,
+          region.x * scaleX,
+          region.y * scaleY,
+          region.size * scaleX,
+          region.size * scaleY,
+          32,
+          32
+        );
+      });
+      const plan = planAnimation(framePixels, animationFrames.map(frame => frame.durationTicks));
+      animationImages = plan.images.map(frame => quantize(framePixels[frame], 15, pixelArtEnhance));
+      animationSteps = plan.steps.map((image, frame) => ({ image, durationTicks: animationFrames[frame].durationTicks }));
+      if (playbackSteps().length < 2) {
+        animationImages = [];
+        animationSteps = [];
+        throw new Error('This part of the animation doesn\'t change. Choose a different area, or use Static.');
+      }
+      downloadBtn.disabled = false;
+      animationStatus.textContent = '';
+      animationStatus.classList.add('hidden');
+      showAnimationFrame(0);
+    } catch (err) {
+      console.error(err);
+      setAnimatedOutput(false);
+      showError(escapeHtml(err.message || 'The animation could not be prepared.'));
+    }
+  }, 200);
+}
+
+function stopAnimationPreview() {
+  clearTimeout(animationPreviewTimeout);
+  animationPreviewTimeout = null;
+}
+
+function showAnimationFrame(index) {
+  if (!animatedOutput || animationImages.length === 0) return;
+  const steps = playbackSteps();
+  const step = steps[index % steps.length];
+  const icon = animationImages[step.image];
+  renderPreview(icon.palette, icon.indices);
+  animationPreviewTimeout = setTimeout(
+    () => showAnimationFrame((index + 1) % steps.length),
+    Math.max(17, step.durationTicks * 1000 / 60)
+  );
+}
+
 // The square area of loadedImage that becomes the icon, in image pixels.
 function cropRegion() {
   if (!cropperInstance) return null;
@@ -525,6 +762,15 @@ function processImage() {
   const previewScale = CROP_PREVIEW_SIZE / region.size;
   cropPreviewCtx.clearRect(0, 0, CROP_PREVIEW_SIZE, CROP_PREVIEW_SIZE);
   cropPreviewCtx.drawImage(loadedImage, -region.x * previewScale, -region.y * previewScale, loadedImage.width * previewScale, loadedImage.height * previewScale);
+  if (animationFile) {
+    const scale = (cropPreviewAnim.clientWidth || CROP_PREVIEW_SIZE) / region.size;
+    Object.assign(cropPreviewAnimImg.style, {
+      left: `${-region.x * scale}px`,
+      top: `${-region.y * scale}px`,
+      width: `${loadedImage.width * scale}px`,
+      height: `${loadedImage.height * scale}px`
+    });
+  }
 
   // Area-average the region down to 32x32
   currentPixels = downscaleRegion(imageSource, region.x * imageSourceScale, region.y * imageSourceScale, region.size * imageSourceScale);
@@ -543,13 +789,22 @@ function currentIcon() {
   return usesIndexedIcon() ? indexedIcon : quantize(currentPixels, 15, pixelArtEnhance);
 }
 
-function updateBannerData() {
+function updateBannerData({ processAnimation = true } = {}) {
   if (!currentPixels) return;
 
-  const { palette, indices } = currentIcon();
-  renderPreview(palette, indices);
   paletteNote.classList.toggle('hidden', !usesIndexedIcon());
-  downloadBtn.disabled = false;
+  if (animatedOutput) {
+    if (animationImages.length === 0) {
+      const icon = currentIcon();
+      renderPreview(icon.palette, icon.indices);
+    }
+    downloadBtn.disabled = animationImages.length === 0 || animationProcessTimeout !== null;
+    if (processAnimation) scheduleAnimationProcessing();
+  } else {
+    const icon = currentIcon();
+    renderPreview(icon.palette, icon.indices);
+    downloadBtn.disabled = false;
+  }
 }
 
 function renderPreview(palette, indices) {
@@ -565,8 +820,23 @@ function showIconPreview() {
 
 function triggerDownload() {
   if (!currentPixels) return;
+  if (animatedOutput && animationImages.length === 0) return;
 
-  saveFile(packBannerIcon(currentIcon(), inputTitle.value, inputSubtitle.value, inputAuthor.value), 'banner.bin');
+  try {
+    const bytes = animatedOutput
+      ? packAnimatedBanner(
+        animationImages[0],
+        animationImages,
+        playbackSteps(),
+        inputTitle.value, inputSubtitle.value, inputAuthor.value
+      )
+      : packBannerIcon(currentIcon(), inputTitle.value, inputSubtitle.value, inputAuthor.value);
+    saveFile(bytes, 'banner.bin');
+  } catch (err) {
+    console.error(err);
+    showError(escapeHtml(err.message || 'The banner could not be created.'));
+    return;
+  }
 
   // Browsers don't reliably surface a visible signal that a download
   // succeeded, and this button is a documented step in external guides
@@ -594,6 +864,7 @@ function resetAll() {
   drawPlaceholderIcon();
   setPreviewScale2x(false);
   setPixelArtEnhance(false);
+  setAnimationSpeed(1);
   layoutChosen = false;
 }
 
@@ -603,6 +874,7 @@ function resetDropzonePrompt() {
   // .bin import had moved it into the "banner loaded" card.
   dropzonePreviewWrapper.insertBefore(cropPreviewCanvas, dropzoneFilename);
   cropPreviewCanvas.classList.add('hidden');
+  hideAnimatedCropPreview();
   cropControl.classList.add('hidden');
   dropzoneFilename.classList.add('hidden');
   dropzoneFilename.textContent = '';
