@@ -554,10 +554,6 @@ body {
   margin-top: var(--space-sm);
 }
 
-.flashcart-note {
-  margin-top: var(--space-sm);
-}
-
 .help-text a {
   color: var(--violet);
   text-decoration: underline;
@@ -983,11 +979,6 @@ code {
   font-size: 0.85em;
 }
 
-.app-footer code {
-  background-color: var(--bg);
-  border: 1px solid var(--border);
-}
-
 .header-main-row {
   display: flex;
   justify-content: space-between;
@@ -1106,9 +1097,57 @@ code {
   height: 192px;
 }
 
-.cover-placement {
+/* What to do with the downloaded file, under each tab's download button */
+.download-help {
+  margin-top: var(--space-sm);
   line-height: 1.6;
   text-align: left;
+}
+
+.download-help p,
+.download-help ul {
+  margin: 0;
+}
+
+.download-help p + p {
+  margin-top: var(--space-sm);
+}
+
+.download-help ul {
+  padding-left: 1.25em;
+}
+
+.launcher-tabs {
+  display: flex;
+  gap: var(--space-md);
+  margin: var(--space-xs) 0 var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.launcher-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: var(--space-xs) 0;
+  color: var(--fg-secondary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.launcher-tab:hover {
+  color: var(--fg);
+}
+
+.launcher-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--violet);
+}
+
+.launcher-tab:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
 }
 
 .hidden {

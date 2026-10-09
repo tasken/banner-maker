@@ -40,7 +40,7 @@ Add the file to your homebrew project before building. Use the static NTR v1 opt
 - **Browser support**: animated export needs a browser with `ImageDecoder` (current Chrome or Edge) and an HTTPS page, like the online version; static banner export works everywhere.
 - **Flashcart-ready**: static downloads are 2,112-byte NTR v1 banners with a valid CRC16, the format Cart-Flasher's `Write DS banner` accepts.
 - **Clean edges**: pixels under 50% opacity become transparent, and the rest keep their own color, so edges don't get halos.
-- **Pico Launcher covers**: any image becomes a 128×96, 256-color BMP in the exact layout Pico Launcher reads, stored the right way up, with the hidden right-hand strip filled with the image's darkest color.
+- **Pico Launcher covers**: any image becomes a 128×96, 255-color BMP in the exact layout Pico Launcher reads, stored the right way up, with the hidden right-hand strip filled with black. AKMenu-Next reads the same files from `/_nds/covers_code/`, `/_nds/covers_name/` or `/_pico/covers/nds|gba/`.
 - **Runs in your browser**: plain HTML, CSS and JavaScript, plus Cropper.js. Your files never leave your device.
 
 ## Local development

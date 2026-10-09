@@ -319,7 +319,7 @@ function setAnimatedOutput(enabled) {
     if (token !== animationDecodeToken) return;
     console.error(err);
     setAnimatedOutput(false);
-    showError(escapeHtml(err.message || 'The animation could not be read.'));
+    showError(escapeHtml(err.message || 'This animation couldn\'t be read. Upload a different file, or use Static.'));
   });
 }
 
@@ -707,7 +707,7 @@ function scheduleAnimationProcessing() {
     } catch (err) {
       console.error(err);
       setAnimatedOutput(false);
-      showError(escapeHtml(err.message || 'The animation could not be prepared.'));
+      showError(escapeHtml(err.message || 'This animation couldn\'t be made into a banner. Try a different area, or use Static.'));
     }
   }, 200);
 }
@@ -834,7 +834,7 @@ function triggerDownload() {
     saveFile(bytes, 'banner.bin');
   } catch (err) {
     console.error(err);
-    showError(escapeHtml(err.message || 'The banner could not be created.'));
+    showError(escapeHtml(err.message || 'The banner couldn\'t be made. Try again, or upload a different image.'));
     return;
   }
 

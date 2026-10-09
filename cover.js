@@ -14,6 +14,7 @@ const fileInput = document.getElementById('cover-file-input');
 const dropzonePrompt = document.getElementById('cover-dropzone-prompt');
 const dropzoneFilename = document.getElementById('cover-dropzone-filename');
 const errorBox = document.getElementById('cover-error-box');
+const launcherButtons = [...document.querySelectorAll('[data-launcher]')];
 const errorMessage = document.getElementById('cover-error-message');
 const cropControl = document.getElementById('cover-crop-control');
 const cropperWrapper = document.getElementById('cover-cropper-wrapper');
@@ -174,7 +175,7 @@ function initCropper() {
       processCover();
     },
     crop() {
-      // A full 256-color pass can take over 100 ms on busy images, too slow
+      // A full 255-color pass can take over 100 ms on busy images, too slow
       // for every pointer move. Dragging shows the plain resize; the full
       // pass runs when the drag ends or the box sits still for a moment
       // (wheel, pinch and keyboard zoom never fire cropend).
@@ -301,17 +302,19 @@ function coverPixels(region) {
 
 function processCover() {
   // The full pass supersedes any plain-resize frame still queued, which
-  // would otherwise paint over the 256-color preview.
+  // would otherwise paint over the 255-color preview.
   cancelAnimationFrame(processFrame);
   processFrame = 0;
   if (!loadedImage || !imageSource) return;
   const region = layoutMode === 'crop' ? cropRegion() : layoutMode === 'fill' ? fillRegion() : fitRegion();
   if (!region) return;
 
-  currentCover = quantizeImage(coverPixels(region), COVER_W, COVER_H, { colors: 256, transparent: false, dither });
+  // 255 colors leave one palette slot free, so the hidden right-hand strip
+  // can be pure black: AKMenu-Next trims only pure black columns.
+  currentCover = quantizeImage(coverPixels(region), COVER_W, COVER_H, { colors: 255, transparent: false, dither });
   const rgba = indicesToRgba(currentCover.palette, currentCover.indices, { transparent: false });
   previewCtx.putImageData(new ImageData(rgba, COVER_W, COVER_H), 0, 0);
-  previewHelp.textContent = 'This is the part Pico Launcher shows, reduced to 256\u00a0colors.';
+  previewHelp.textContent = 'This is the part Pico Launcher shows, reduced to 255\u00a0colors.';
   downloadBtn.disabled = false;
 }
 
@@ -372,3 +375,13 @@ function triggerDownload() {
 }
 
 drawPreviewPlaceholder();
+
+// Placement help: one launcher's folders at a time.
+launcherButtons.forEach(button => button.addEventListener('click', () => {
+  launcherButtons.forEach(other => {
+    const active = other === button;
+    other.classList.toggle('active', active);
+    other.setAttribute('aria-pressed', String(active));
+    document.getElementById(other.getAttribute('aria-controls')).classList.toggle('hidden', !active);
+  });
+}));

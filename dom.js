@@ -60,10 +60,10 @@ export async function readAnimatedImageFrames(file, onProgress = () => {}) {
   if (!Decoder || typeof Decoder.isTypeSupported !== 'function') {
     throw new Error(globalThis.isSecureContext === false
       ? 'Animated banners only work when this page is opened over HTTPS. Open the online version, or upload a still image.'
-      : 'This browser cannot read animated images. Try the latest Chrome or Edge, or upload a still image.');
+      : 'This browser can\'t read animated images. Try the latest Chrome or Edge, or upload a still image.');
   }
   if (!type || !await Decoder.isTypeSupported(type)) {
-    throw new Error('This browser cannot read animation frames from this file. Try an animated GIF or WebP in the latest Chrome or Edge.');
+    throw new Error('This browser can\'t read the frames of this file. Try an animated GIF or WebP in the latest Chrome or Edge.');
   }
 
   const decoder = new Decoder({ data: await file.arrayBuffer(), type });
@@ -111,7 +111,7 @@ export async function readAnimatedImageFrames(file, onProgress = () => {}) {
     }
 
     return buckets.map(({ durationUs, frame }, index) => {
-      if (!frame) throw new Error(`Could not decode animation frame ${sampleIndices[index] + 1}`);
+      if (!frame) throw new Error(`Frame ${sampleIndices[index] + 1} of this animation couldn't be read. Save the file again from your editor, or upload a different one.`);
       return {
         ...frame,
         durationTicks: durationUs * 60 / 1_000_000

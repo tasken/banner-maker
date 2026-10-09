@@ -163,7 +163,7 @@
                     <button type="button" id="btn-format-static" class="pill-btn active" aria-pressed="true">Static</button>
                     <button type="button" id="btn-format-animated" class="pill-btn" aria-pressed="false">Animated</button>
                   </div>
-                  <span class="tooltip-trigger" tabindex="0" data-tip="Static works on every DS and DSi, and on flashcarts. Animated plays your GIF or WebP in up to 64 steps built from 8 of its frames, and loops on the DSi menu; a DS shows the first frame." aria-label="Banner type help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+                  <span class="tooltip-trigger" tabindex="0" data-tip="Static works on every DS and DSi, and on flashcarts. Animated plays your GIF or WebP on the DSi menu, using up to 8 of its frames. A DS shows the first&nbsp;frame." aria-label="Banner type help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
                 </div>
               </div>
               <p id="animation-status" class="help-text banner-format-help hidden" role="status" aria-live="polite"></p>
@@ -237,16 +237,14 @@
               Download banner.bin
             </button>
           </div>
-          <p class="help-text flashcart-note">
-            Changing a flashcart's banner? Stock DSi and 3DS consoles block carts with a changed banner.
-            Read the <a href="https://sanrax.github.io/flashcart-guides/tutorials/icon-change/" target="_blank" rel="noopener">flashcart banner guide</a> first.
-          </p>
+          <div class="help-text download-help">
+            <p>Add <code>banner.bin</code> to your homebrew project before building, or flash it by following your flashcart&nbsp;guide.</p>
+            <p>Changing a flashcart's banner? Stock DSi and 3DS consoles block carts with a changed banner.
+            Read the <a href="https://sanrax.github.io/flashcart-guides/tutorials/icon-change/" target="_blank" rel="noopener">flashcart banner guide</a> first.</p>
+          </div>
           <!-- Hidden canvas for 32x32 image processing -->
           <canvas id="resize-canvas" width="32" height="32" style="display:none"></canvas>
         </section>
-      <div class="app-footer">
-        <p>The downloaded <code>banner.bin</code> is your NDS banner data. Add it to your homebrew project before building, or flash it by following your flashcart&nbsp;guide.</p>
-      </div>
     </div>
 
     <div id="panel-cover" class="tab-panel hidden" role="tabpanel" aria-labelledby="tab-cover">
@@ -255,8 +253,8 @@
           <span class="info-card-title">Cover specs</span>
         </div>
         <p class="info-card-text">
-          Pico Launcher shows covers at <strong>106 × 96 px</strong> with up to <strong>256 colors</strong>.
-          Drop any image and this tool makes a <code>cover.bmp</code> in the exact format Pico&nbsp;reads.
+          Pico Launcher shows covers at <strong>106 × 96 px</strong>. This tool uses up to <strong>255 colors</strong>.
+          Drop any image and this tool makes a <code>cover.bmp</code> in the exact format Pico&nbsp;reads. AKMenu-Next reads it too.
         </p>
       </div>
 
@@ -345,12 +343,23 @@
           <button id="cover-reset-btn" class="reset-btn" aria-label="Reset the cover image and options">Reset</button>
           <button id="cover-download-btn" class="download-btn" disabled>Download cover.bmp</button>
         </div>
-        <p class="help-text cover-placement">
-          Put <code>cover.bmp</code> on your SD card in one of these places:
-          <br>&bull; Inside a folder, as <code>cover.bmp</code>: the cover for that&nbsp;folder.
-          <br>&bull; In <code>/_pico/covers/user/</code>, renamed to the game's file name plus <code>.bmp</code>, like <code>myGame.nds.bmp</code>.
-          <br>&bull; In <code>/_pico/covers/nds/</code> or <code>/_pico/covers/gba/</code>, renamed to the game's 4-letter code from its ROM header, like <code>ABCD.bmp</code>.
-        </p>
+        <div class="help-text download-help">
+          <p id="cover-launcher-label">Put <code>cover.bmp</code> on your SD card for:</p>
+          <div class="launcher-tabs" role="group" aria-labelledby="cover-launcher-label">
+            <button type="button" class="launcher-tab active" data-launcher="pico" aria-pressed="true" aria-controls="cover-placement-pico">Pico Launcher</button>
+            <button type="button" class="launcher-tab" data-launcher="ak" aria-pressed="false" aria-controls="cover-placement-ak">AKMenu-Next</button>
+          </div>
+          <ul id="cover-placement-pico">
+            <li>Inside a folder, as <code>cover.bmp</code>: the cover for that&nbsp;folder.</li>
+            <li>In <code>/_pico/covers/user/</code>, named after the game's file, like <code>myGame.nds.bmp</code>.</li>
+            <li>In <code>/_pico/covers/nds/</code> or <code>/_pico/covers/gba/</code>, named after the game's 4-letter code (find it for <a href="https://www.gametdb.com/DS/Search" target="_blank" rel="noopener">DS</a> or <a href="https://gbhwdb.gekkio.fi/cartridges/gba.html" target="_blank" rel="noopener">GBA</a>), like <code>ABCD.bmp</code>.</li>
+          </ul>
+          <ul id="cover-placement-ak" class="hidden">
+            <li>In <code>/_nds/covers_code/</code>, named after the game's 4-letter code (find it for <a href="https://www.gametdb.com/DS/Search" target="_blank" rel="noopener">DS</a> or <a href="https://gbhwdb.gekkio.fi/cartridges/gba.html" target="_blank" rel="noopener">GBA</a>), like <code>ABCD.bmp</code>.</li>
+            <li>In <code>/_nds/covers_name/</code>, named after the game's file without <code>.nds</code>, like <code>myGame.bmp</code>.</li>
+            <li>It also reads the <code>/_pico/covers/nds/</code> and <code>/_pico/covers/gba/</code> folders, but not folder covers or <code>/_pico/covers/user/</code>.</li>
+          </ul>
+        </div>
       </section>
     </div>
 
