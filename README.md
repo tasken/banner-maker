@@ -1,3 +1,5 @@
+<img src="favicon.png" alt="" width="64" height="64">
+
 # DS Banner Maker
 
 Make the icon and title (`banner.bin`) that the DS and DSi menus show for your homebrew game or flashcart, or a cover for Pico Launcher.
