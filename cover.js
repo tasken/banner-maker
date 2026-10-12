@@ -123,6 +123,11 @@ function setLayoutMode(mode) {
   paddingRow.classList.toggle('hidden', mode !== 'fit');
 }
 
+function updateFillAvailability(isCoverAspect) {
+  btnModeFill.disabled = isCoverAspect;
+  if (isCoverAspect && layoutMode === 'fill') setLayoutMode('fit');
+}
+
 function setPadding(px) {
   padding = px;
   paddingButtons.forEach(([value, button]) => button.classList.toggle('active', value === px));
@@ -216,6 +221,8 @@ function handleFile(file) {
       loadedImage = img;
       imageSource = createImageSource(rgba, width, height);
       imageSourceScale = width / img.width;
+      const shapedLikeCover = Math.abs(img.width / img.height - COVER_ASPECT) < 0.01;
+      updateFillAvailability(shapedLikeCover);
       if (!backgroundChosen) setBackground(pickBackground(rgba, width, height));
 
       dropzonePrompt.classList.add('hidden');
@@ -225,7 +232,6 @@ function handleFile(file) {
 
       // Keep the user's Crop/Fit choice; until they make one, an image
       // already shaped like a cover fits as-is and anything else is cropped.
-      const shapedLikeCover = Math.abs(img.width / img.height - COVER_ASPECT) < 0.01;
       if (!layoutChosen) setLayoutMode(shapedLikeCover ? 'fit' : 'crop');
       destroyCropper();
       cropEditorImg.src = event.target.result;
@@ -324,6 +330,7 @@ function unloadImage() {
   loadedImage = null;
   imageSource = null;
   currentCover = null;
+  updateFillAvailability(false);
   downloadBtn.disabled = true;
   destroyCropper();
   cropEditorImg.src = '';
