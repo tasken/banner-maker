@@ -724,7 +724,7 @@ const ANIMATION_MAX_STEP_TICKS = 0xFF;
  *
  * @param {{palette: Array<{r: number, g: number, b: number}>, indices: Uint8Array}} fallbackIcon
  * @param {Array<{palette: Array<{r: number, g: number, b: number}>, indices: Uint8Array}>} images 1 to 8 icons
- * @param {Array<{image: number, durationTicks: number}>} steps at least 2
+ * @param {Array<{image: number, durationTicks: number, flipH?: boolean, flipV?: boolean}>} steps at least 2
  * @param {string} title
  * @param {string} subtitle
  * @param {string} author
@@ -761,12 +761,12 @@ export function packAnimatedBanner(fallbackIcon, images, steps, title, subtitle,
   });
 
   const sequence = [];
-  steps.forEach(({ image, durationTicks }, index) => {
+  steps.forEach(({ image, durationTicks, flipH, flipV }, index) => {
     if (!Number.isInteger(image) || image < 0 || image >= images.length) {
       throw new RangeError(`Animation step ${index + 1} uses a missing image`);
     }
-    // Bitmap and palette slot go in bits 8-10 and 11-13.
-    const flags = (image << 8) | (image << 11);
+    // Bitmap and palette slot go in bits 8-10 and 11-13; flips in bits 14-15.
+    const flags = (image << 8) | (image << 11) | (flipH ? 0x4000 : 0) | (flipV ? 0x8000 : 0);
     if (!Number.isInteger(durationTicks) || durationTicks < 1) {
       throw new RangeError(`Animation step ${index + 1} must last at least 1/60 second`);
     }
@@ -966,20 +966,55 @@ function planBySlices(dist, durations, maxImages) {
   return { images, steps: slices.map(slice => sliceImage.get(slice)) };
 }
 
+function sameLook(a, b) {
+  return a.image === b.image && Boolean(a.flipH) === Boolean(b.flipH) && Boolean(a.flipV) === Boolean(b.flipV);
+}
+
+function flipPixels(pixels, flipH, flipV) {
+  const out = new Array(1024);
+  for (let y = 0; y < 32; y++) {
+    for (let x = 0; x < 32; x++) {
+      out[y * 32 + x] = pixels[(flipV ? 31 - y : y) * 32 + (flipH ? 31 - x : x)];
+    }
+  }
+  return out;
+}
+
+/**
+ * Finds frames that are an exact mirror (or repeat) of an earlier frame, so
+ * they can reuse its image with the banner's horizontal/vertical flip bits.
+ *
+ * @param {Array<Array<{r: number, g: number, b: number, a: number}>>} frames 32x32 pixels per frame
+ * @returns {Array<{base: number, flipH: boolean, flipV: boolean}>} per frame, the
+ *   earlier frame (a base, which maps to itself) it copies
+ */
+export function findFlipReuse(frames) {
+  const bases = [];
+  return frames.map((pixels, index) => {
+    for (const base of bases) {
+      for (const [flipH, flipV] of [[false, false], [true, false], [false, true], [true, true]]) {
+        if (frameDistance(flipPixels(frames[base], flipH, flipV), pixels) === 0) return { base, flipH, flipV };
+      }
+    }
+    bases.push(index);
+    return { base: index, flipH: false, flipV: false };
+  });
+}
+
 /**
  * Fits steps into the 64-entry DSi sequence. Back-to-back steps that show
  * the same image are joined; while the sequence is still too long, the
  * shortest step is folded into the one before it. Durations may be
  * fractional; the result is whole ticks with the total time kept.
  *
- * @param {Array<{image: number, durationTicks: number}>} steps
- * @returns {Array<{image: number, durationTicks: number}>}
+ * @param {Array<{image: number, durationTicks: number, flipH?: boolean, flipV?: boolean}>} steps
+ * @returns {Array<{image: number, durationTicks: number, flipH?: boolean, flipV?: boolean}>}
  */
 export function fitAnimationSteps(steps) {
   const joined = [];
   for (const step of steps) {
     const last = joined[joined.length - 1];
-    if (last && last.image === step.image) last.durationTicks += step.durationTicks;
+    if (last && sameLook(last, step)) last.durationTicks += step.durationTicks;
     else joined.push({ ...step });
   }
   const entries = list => list.reduce((sum, s) => sum + Math.ceil(s.durationTicks / ANIMATION_MAX_STEP_TICKS), 0);
@@ -990,7 +1025,7 @@ export function fitAnimationSteps(steps) {
     }
     joined[shortest - 1].durationTicks += joined[shortest].durationTicks;
     joined.splice(shortest, 1);
-    if (joined[shortest] && joined[shortest].image === joined[shortest - 1].image) {
+    if (joined[shortest] && sameLook(joined[shortest], joined[shortest - 1])) {
       joined[shortest - 1].durationTicks += joined[shortest].durationTicks;
       joined.splice(shortest, 1);
     }

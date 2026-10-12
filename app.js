@@ -1,4 +1,4 @@
-import { fitAnimationSteps, packAnimatedBanner, packBannerIcon, planAnimation, quantize, createImageSource, downscaleRegion, downscaleRegionRect, decodeBanner, decodeBannerAnimation, decodeIndexedIcon, getBannerFormat, indicesToRgba, pixelsToRgba } from './core.js?v=__COMMIT_HASH__';
+import { findFlipReuse, fitAnimationSteps, packAnimatedBanner, packBannerIcon, planAnimation, quantize, createImageSource, downscaleRegion, downscaleRegionRect, decodeBanner, decodeBannerAnimation, decodeIndexedIcon, getBannerFormat, indicesToRgba, pixelsToRgba } from './core.js?v=__COMMIT_HASH__';
 import { countImageFrames, createCanvas, drawCartridgePlaceholder, readAnimatedImageFrames, readImagePixels, saveFile, setActiveButton } from './dom.js?v=__COMMIT_HASH__';
 import { coverLauncherFromHash, resetCover, selectLauncher } from './cover.js?v=__COMMIT_HASH__';
 
@@ -254,17 +254,13 @@ function setAnimationSpeed(speed) {
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   });
-  if (animatedOutput && animationImages.length) {
-    stopAnimationPreview();
-    showAnimationFrame(0);
-  }
 }
 
 // The steps the banner plays at the chosen speed, fitted to its sequence.
-function playbackSteps() {
-  return fitAnimationSteps(animationSteps.map(({ image, durationTicks }) => ({
-    image,
-    durationTicks: durationTicks / animationSpeed
+function playbackSteps(speed = animationSpeed) {
+  return fitAnimationSteps(animationSteps.map(({ durationTicks, ...look }) => ({
+    ...look,
+    durationTicks: durationTicks / speed
   })));
 }
 
@@ -701,9 +697,21 @@ function scheduleAnimationProcessing() {
           32
         );
       });
-      const plan = planAnimation(framePixels, animationFrames.map(frame => frame.durationTicks));
-      animationImages = plan.images.map(frame => quantize(framePixels[frame], 15, pixelArtEnhance));
-      animationSteps = plan.steps.map((image, frame) => ({ image, durationTicks: animationFrames[frame].durationTicks }));
+      // Mirrored repeats reuse an image through the flip bits, so only the
+      // distinct frames compete for the 8 image slots.
+      const reuse = findFlipReuse(framePixels);
+      const bases = reuse.map(({ base }, frame) => base === frame ? frame : -1).filter(frame => frame >= 0);
+      const baseSlot = new Map(bases.map((frame, slot) => [frame, slot]));
+      const baseTicks = bases.map(() => 0);
+      reuse.forEach(({ base }, frame) => { baseTicks[baseSlot.get(base)] += animationFrames[frame].durationTicks; });
+      const plan = planAnimation(bases.map(frame => framePixels[frame]), baseTicks);
+      animationImages = plan.images.map(slot => quantize(framePixels[bases[slot]], 15, pixelArtEnhance));
+      animationSteps = reuse.map(({ base, flipH, flipV }, frame) => ({
+        image: plan.steps[baseSlot.get(base)],
+        flipH,
+        flipV,
+        durationTicks: animationFrames[frame].durationTicks
+      }));
       if (playbackSteps().length < 2) {
         animationImages = [];
         animationSteps = [];
@@ -728,14 +736,25 @@ function stopAnimationPreview() {
 
 function showAnimationFrame(index) {
   if (!animatedOutput || animationImages.length === 0) return;
-  const steps = playbackSteps();
+  // The preview always plays at native speed; the Speed setting only changes the file.
+  const steps = playbackSteps(1);
   const step = steps[index % steps.length];
   const icon = animationImages[step.image];
-  renderPreview(icon.palette, icon.indices);
+  renderPreview(icon.palette, step.flipH || step.flipV ? flipIndices(icon.indices, step.flipH, step.flipV) : icon.indices);
   animationPreviewTimeout = setTimeout(
     () => showAnimationFrame((index + 1) % steps.length),
     Math.max(17, step.durationTicks * 1000 / 60)
   );
+}
+
+function flipIndices(indices, flipH, flipV) {
+  const out = new Uint8Array(1024);
+  for (let y = 0; y < 32; y++) {
+    for (let x = 0; x < 32; x++) {
+      out[y * 32 + x] = indices[(flipV ? 31 - y : y) * 32 + (flipH ? 31 - x : x)];
+    }
+  }
+  return out;
 }
 
 // The square area of loadedImage that becomes the icon, in image pixels.
