@@ -81,9 +81,8 @@
           <div id="bin-loaded-info" class="bin-loaded-card hidden" role="status">
             <div id="bin-preview-slot" class="bin-preview-slot"></div>
             <p id="bin-loaded-text"></p>
-            <button type="button" id="btn-remove-bin" class="remove-btn" aria-label="Remove the imported banner.bin and start fresh">
-              <span class="material-symbols-outlined">close</span>
-              Remove
+            <button type="button" id="btn-remove-bin" class="remove-btn" aria-label="Remove imported banner" title="Remove imported banner">
+              <span class="material-symbols-outlined" aria-hidden="true">close</span>
             </button>
           </div>
 
@@ -163,7 +162,7 @@
                     <button type="button" id="btn-format-static" class="pill-btn active" aria-pressed="true">Static</button>
                     <button type="button" id="btn-format-animated" class="pill-btn" aria-pressed="false">Animated</button>
                   </div>
-                  <span class="tooltip-trigger" tabindex="0" data-tip="Static works on every DS and DSi, and on flashcarts. Animated plays your GIF or WebP on the DSi menu, using up to 8 of its frames. A DS shows the first&nbsp;frame." aria-label="Banner type help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
+                  <span class="tooltip-trigger" tabindex="0" data-tip="Static works on every DS and DSi, and on flashcarts. Animated plays an uploaded GIF or WebP, or keeps an imported DSi banner's animation. It uses up to 8 frames on the DSi menu; a DS shows the first&nbsp;frame." aria-label="Banner type help info"><span class="material-symbols-outlined tooltip-icon">info</span></span>
                 </div>
               </div>
               <p id="animation-status" class="help-text banner-format-help hidden" role="status" aria-live="polite"></p>

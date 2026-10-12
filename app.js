@@ -1,4 +1,4 @@
-import { fitAnimationSteps, packAnimatedBanner, packBannerIcon, planAnimation, quantize, createImageSource, downscaleRegion, downscaleRegionRect, decodeBanner, decodeIndexedIcon, getBannerFormat, indicesToRgba, pixelsToRgba } from './core.js?v=__COMMIT_HASH__';
+import { fitAnimationSteps, packAnimatedBanner, packBannerIcon, planAnimation, quantize, createImageSource, downscaleRegion, downscaleRegionRect, decodeBanner, decodeBannerAnimation, decodeIndexedIcon, getBannerFormat, indicesToRgba, pixelsToRgba } from './core.js?v=__COMMIT_HASH__';
 import { countImageFrames, createCanvas, drawCartridgePlaceholder, readAnimatedImageFrames, readImagePixels, saveFile, setActiveButton } from './dom.js?v=__COMMIT_HASH__';
 import { coverLauncherFromHash, resetCover, selectLauncher } from './cover.js?v=__COMMIT_HASH__';
 
@@ -430,17 +430,6 @@ function crcBadgeHtml(crcChecks) {
   return `<span class="crc-badge warning" title="${details}. The DSi menu hides banners with a wrong checksum. Downloading writes a correct one.">CRC mismatch (fixed when you download)</span>`;
 }
 
-// Re-exporting an imported banner as static NTR v1 names what won't carry over.
-function exportLossHtml(lostOnExport) {
-  const lost = [];
-  if (lostOnExport.translations) lost.push('the separate title for each language (one title is used for all)');
-  if (lostOnExport.chineseKorean) lost.push('the Chinese and Korean titles');
-  if (lostOnExport.animation) lost.push('the icon animation');
-  if (lost.length === 0) return '';
-  const list = lost.length === 1 ? lost[0] : `${lost.slice(0, -1).join(', ')} and ${lost[lost.length - 1]}`;
-  return `<br>Downloads as a static NTR v1 banner, the kind flashcarts have room for, so ${list} won't be kept.`;
-}
-
 function hasTransparentPixel(rgba) {
   for (let i = 3; i < rgba.length; i += 4) {
     if (rgba[i] < 255) return true;
@@ -457,16 +446,23 @@ function setLoadedImage(img, src, rgba, width, height, icon = null) {
   imageSource = createImageSource(rgba, width, height);
   imageSourceScale = width / img.width;
   transparencyInfo.classList.toggle('hidden', !hasTransparentPixel(rgba));
+  updateFillAvailability(width === height);
 
   destroyCropper();
   cropControl.classList.remove('hidden');
   cropEditorImg.src = src;
 }
 
+function updateFillAvailability(isSquare) {
+  btnModeFill.disabled = isSquare;
+  if (isSquare && layoutMode === 'fill') setLayoutMode('fit');
+}
+
 function unloadImage() {
   clearAnimationState();
   loadedImage = null;
   indexedIcon = null;
+  updateFillAvailability(false);
   paletteNote.classList.add('hidden');
   imageSource = null;
   currentPixels = null;
@@ -579,6 +575,14 @@ function handleBinSelect(file, token) {
       }
 
       const parsed = decodeBanner(bytes);
+      const importedFrames = parsed.lostOnExport.animation
+        ? decodeBannerAnimation(bytes).map(frame => ({
+          ...frame,
+          width: 32,
+          height: 32,
+          source: createImageSource(frame.rgba, 32, 32)
+        }))
+        : null;
       inputTitle.value = parsed.title;
       inputSubtitle.value = parsed.subtitle;
       inputAuthor.value = parsed.author;
@@ -594,6 +598,7 @@ function handleBinSelect(file, token) {
       img.onload = function() {
         if (token !== imageLoadToken) return;
         setLoadedImage(img, dataURL, rgba, 32, 32);
+        animationFrames = importedFrames;
 
         // Already a 32x32 square, so fit it as-is
         setLayoutMode('fit');
@@ -610,11 +615,16 @@ function handleBinSelect(file, token) {
         binPreviewSlot.appendChild(cropPreviewCanvas);
         cropPreviewCanvas.classList.remove('hidden');
 
-        binLoadedText.innerHTML = `Editing existing <code>banner.bin</code> (${parsed.format.name}): icon, title & text imported from "${escapeHtml(file.name)}" ${crcBadgeHtml(parsed.crcChecks)}.${exportLossHtml(parsed.lostOnExport)}`;
+        binLoadedText.innerHTML = `Imported ${escapeHtml(parsed.format.name)} banner ${crcBadgeHtml(parsed.crcChecks)}`;
         binLoadedInfo.classList.remove('hidden');
 
         // Populate currentPixels and the preview
         processImage();
+        if (animationFrames?.length) {
+          bannerFormatGroup.classList.remove('hidden');
+          setAnimationSpeed(1);
+          setAnimatedOutput(true);
+        }
       };
 
       img.onerror = function() {

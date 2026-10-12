@@ -1393,6 +1393,49 @@ export function decodeBanner(bannerBytes) {
 }
 
 /**
+ * Decodes the displayed frames and 60 Hz durations from a DSi animated banner.
+ * @param {Uint8Array} bannerBytes
+ * @returns {Array<{rgba: Uint8ClampedArray, durationTicks: number}>}
+ */
+export function decodeBannerAnimation(bannerBytes) {
+  const format = getBannerFormat(bannerBytes);
+  if (!format || bannerBytes.length < format.size) {
+    throw new Error('This is not a complete DS/DSi banner');
+  }
+  if (format.version !== 0x0103) return [];
+
+  const bitmaps = Array.from({ length: 8 }, (_, index) =>
+    tileDecode(bannerBytes.subarray(ANIM_BITMAPS + index * ICON_BITMAP_SIZE, ANIM_BITMAPS + (index + 1) * ICON_BITMAP_SIZE))
+  );
+  const palettes = Array.from({ length: 8 }, (_, index) =>
+    rgb555ToPalette(bannerBytes.subarray(ANIM_PALETTES + index * ICON_PALETTE_SIZE, ANIM_PALETTES + (index + 1) * ICON_PALETTE_SIZE))
+  );
+  const frames = [];
+
+  for (let index = 0; index < ANIMATION_MAX_STEPS; index++) {
+    const token = readU16(bannerBytes, ANIM_SEQUENCE + index * 2);
+    const durationTicks = token & 0xFF;
+    if (durationTicks === 0) break;
+
+    const bitmap = bitmaps[(token >> 8) & 0x07];
+    const palette = palettes[(token >> 11) & 0x07];
+    const flipH = Boolean(token & 0x4000);
+    const flipV = Boolean(token & 0x8000);
+    const indices = new Uint8Array(1024);
+    for (let y = 0; y < 32; y++) {
+      for (let x = 0; x < 32; x++) {
+        const sourceX = flipH ? 31 - x : x;
+        const sourceY = flipV ? 31 - y : y;
+        indices[y * 32 + x] = bitmap[sourceY * 32 + sourceX];
+      }
+    }
+    frames.push({ rgba: indicesToRgba(palette, indices), durationTicks });
+  }
+
+  return frames;
+}
+
+/**
  * Picks a cover background for an image. With see-through areas (logos,
  * cut-out art) it picks the color that contrasts with the visible content, so
  * the art stays readable. Otherwise it matches the image's outer edge, so Fit

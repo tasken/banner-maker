@@ -35,9 +35,9 @@ Add the file to your homebrew project before building. Use the static NTR v1 opt
 ## Features
 
 - **Any image in**: resized to 32×32 and reduced to 16 colors, the first one transparent. Colors are picked in the DS's 15-bit RGB555 space, weighted for how the eye sees them.
-- **Edit existing banners**: loads the icon and text from any `banner.bin` (NTR v1–v3 or DSi animated) and checks every checksum the DSi menu checks. Re-exporting an imported banner uses its static icon and text; Chinese/Korean titles and imported icon animations aren't kept.
-- **Animated DSi banners**: animated GIF/WebP files can be exported as DSi `0x0103` banners with up to 64 steps built from 8 of its frames, so repeating loops keep their full motion. The sequence loops on the DSi menu. Animated uploads pick this type automatically; every other image makes a static NTR v1 banner.
-- **Browser support**: animated export needs a browser with `ImageDecoder` (current Chrome or Edge) and an HTTPS page, like the online version; static banner export works everywhere.
+- **Edit existing banners**: loads the icon and text from any `banner.bin` (NTR v1–v3 or DSi animated) and checks every checksum the DSi menu checks. DSi animated banners also load their animation and timing; re-export them as Animated to keep the animation. Chinese/Korean titles aren't kept.
+- **Animated DSi banners**: animated GIF/WebP files and imported DSi banner animations can be exported as DSi `0x0103` banners with up to 64 steps built from 8 frames. Imported animation timing is kept at Normal speed. The sequence loops on the DSi menu. Animated uploads and imported animations pick this type automatically; every other image makes a static NTR v1 banner.
+- **Browser support**: reading animated GIF/WebP files needs a browser with `ImageDecoder` (current Chrome or Edge) and an HTTPS page, like the online version. Static export and importing an existing banner work without it.
 - **Flashcart-ready**: static downloads are 2,112-byte NTR v1 banners with a valid CRC16, the format Cart-Flasher's `Write DS banner` accepts.
 - **Clean edges**: pixels under 50% opacity become transparent, and the rest keep their own color, so edges don't get halos.
 - **Pico Launcher covers**: any image becomes a 128×96, 255-color BMP in the exact layout Pico Launcher reads, stored the right way up, with the hidden right-hand strip filled with black. AKMenu-Next reads the same files from `/_nds/covers_code/`, `/_nds/covers_name/` or `/_pico/covers/nds|gba/`.

@@ -305,9 +305,14 @@ body {
   transition: all var(--motion-short3) var(--motion-easing-standard);
 }
 
-.pill-btn:hover {
+.pill-btn:hover:not(:disabled) {
   color: var(--fg-secondary);
   background-color: color-mix(in srgb, var(--bg-secondary) calc(100% - var(--state-hover)), var(--fg) var(--state-hover));
+}
+
+.pill-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .pill-btn.active {
@@ -401,10 +406,12 @@ body {
    the icon/title/text came from an imported banner.bin rather than a plain
    image upload. Never shown for plain image uploads. */
 .bin-loaded-card {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  padding: var(--space-md);
+  min-height: 56px;
+  padding: var(--space-sm) 52px var(--space-sm) var(--space-sm);
   background-color: var(--success-bg);
   border: 1px solid var(--success-border);
   color: var(--success-text);
@@ -441,6 +448,7 @@ body {
 
 .bin-loaded-card p {
   flex: 1;
+  min-width: 0;
   margin: 0;
   font-size: 0.78rem;
   line-height: 1.4;
@@ -459,25 +467,28 @@ body {
 
 .crc-badge.valid {
   background-color: var(--success);
-  color: #ffffff;
+  color: #111827;
 }
 
 .crc-badge.warning {
   background-color: var(--warning);
-  color: #ffffff;
+  color: #111827;
 }
 
 .remove-btn {
-  display: flex;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-xs);
-  padding: var(--space-sm) var(--space-md);
-  font-size: 0.78rem;
-  font-weight: 600;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
   color: var(--success-text);
   background-color: transparent;
-  border: 1px solid var(--success-border);
-  border-radius: var(--shape-sm);
+  border: 0;
+  border-radius: var(--shape-full);
   cursor: pointer;
   flex-shrink: 0;
   transition: background-color var(--motion-short3) var(--motion-easing-standard);
@@ -487,8 +498,13 @@ body {
   background-color: var(--success-border);
 }
 
+.remove-btn:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
 .remove-btn .material-symbols-outlined {
-  font-size: 16px !important;
+  font-size: 20px !important;
 }
 
 /* Crop controls */
@@ -948,10 +964,9 @@ body {
 
 .upload-tip {
   font-size: 0.78rem;
-  color: var(--success-text);
+  color: var(--fg-secondary);
   line-height: 1.45;
-  text-align: center;
-  text-wrap: balance;
+  text-align: left;
 }
 
 /* Footer */
