@@ -557,8 +557,13 @@ body {
   margin: 0;
 }
 
-.crop-help-text {
-  margin-top: var(--space-sm);
+.dropzone-details {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--fg-muted);
+  text-align: center;
+  text-wrap: balance;
 }
 
 .help-text a {

@@ -147,6 +147,7 @@ let animationProcessTimeout = null;
 let animationPreviewTimeout = null;
 let animationFile = null;
 let animationFrames = null;
+let inputInfo = null; // { name, kind, label, width, height, steps } of the loaded file
 let animationImages = []; // up to 8 icons
 let animationSteps = []; // { image, durationTicks } per source frame, at normal speed
 let animatedOutput = false;
@@ -264,6 +265,31 @@ function playbackSteps(speed = animationSpeed) {
   })));
 }
 
+const detailsInput = document.getElementById('details-input');
+
+function formatSeconds(ticks) {
+  return `${(ticks / 60).toFixed(1)} s`;
+}
+
+// Describes the loaded file, under its name in the dropzone.
+function updateDetails() {
+  if (!inputInfo) {
+    detailsInput.textContent = '';
+    detailsInput.classList.add('hidden');
+    return;
+  }
+  const parts = [inputInfo.label];
+  if (inputInfo.width) parts.push(`${inputInfo.width}×${inputInfo.height}`);
+  const frameCount = inputInfo.kind === 'banner' ? inputInfo.steps : animationFrames?.length;
+  if (frameCount > 1) {
+    parts.push(`${frameCount} ${inputInfo.kind === 'banner' ? 'steps' : 'frames'}`);
+    const ticks = animationFrames?.reduce((sum, frame) => sum + frame.durationTicks, 0);
+    if (ticks) parts.push(`${formatSeconds(ticks)} loop`);
+  }
+  detailsInput.textContent = parts.join(' · ');
+  detailsInput.classList.remove('hidden');
+}
+
 function setAnimatedOutput(enabled) {
   animatedOutput = enabled;
   animationSpeedGroup.classList.toggle('hidden', !enabled);
@@ -285,6 +311,7 @@ function setAnimatedOutput(enabled) {
       const icon = currentIcon();
       renderPreview(icon.palette, icon.indices);
     }
+    updateDetails();
     return;
   }
 
@@ -456,6 +483,8 @@ function updateFillAvailability(isSquare) {
 
 function unloadImage() {
   clearAnimationState();
+  inputInfo = null;
+  updateDetails();
   loadedImage = null;
   indexedIcon = null;
   updateFillAvailability(false);
@@ -509,6 +538,14 @@ function handleFileSelect() {
       cropPreviewCanvas.classList.toggle('hidden', Boolean(animationFile));
       dropzoneFilename.textContent = `✓ ${file.name}`;
       dropzoneFilename.classList.remove('hidden');
+      inputInfo = {
+        name: file.name,
+        kind: 'image',
+        label: (file.type.split('/')[1] || file.name.split('.').pop() || 'image').toUpperCase(),
+        width: img.naturalWidth,
+        height: img.naturalHeight
+      };
+      updateDetails();
 
       // A plain image was uploaded, so any previous "editing existing
       // banner.bin" indicator no longer applies.
@@ -608,6 +645,12 @@ function handleBinSelect(file, token) {
 
         binLoadedText.innerHTML = `Imported ${escapeHtml(parsed.format.name)} banner ${crcBadgeHtml(parsed.crcChecks)}`;
         binLoadedInfo.classList.remove('hidden');
+        inputInfo = {
+          name: file.name,
+          kind: 'banner',
+          label: `${parsed.format.name} banner`,
+          steps: importedFrames ? importedFrames.length : 0
+        };
 
         // Populate currentPixels and the preview
         processImage();
@@ -616,6 +659,7 @@ function handleBinSelect(file, token) {
           setAnimationSpeed(1);
           setAnimatedOutput(true);
         }
+        updateDetails();
       };
 
       img.onerror = function() {
@@ -720,6 +764,7 @@ function scheduleAnimationProcessing() {
       downloadBtn.disabled = false;
       animationStatus.textContent = '';
       animationStatus.classList.add('hidden');
+      updateDetails();
       showAnimationFrame(0);
     } catch (err) {
       console.error(err);

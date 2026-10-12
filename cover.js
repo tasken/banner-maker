@@ -320,7 +320,7 @@ function processCover() {
   currentCover = quantizeImage(coverPixels(region), COVER_W, COVER_H, { colors: 255, transparent: false, dither });
   const rgba = indicesToRgba(currentCover.palette, currentCover.indices, { transparent: false });
   previewCtx.putImageData(new ImageData(rgba, COVER_W, COVER_H), 0, 0);
-  previewHelp.textContent = 'This is the part Pico Launcher shows, reduced to 255\u00a0colors.';
+  previewHelp.classList.add('hidden');
   downloadBtn.disabled = false;
 }
 
@@ -340,6 +340,7 @@ function unloadImage() {
   dropzoneFilename.textContent = '';
   drawPreviewPlaceholder();
   previewHelp.textContent = 'Upload an image to see your cover\u00a0here.';
+  previewHelp.classList.remove('hidden');
 }
 
 // Same cartridge as the Banner tab's empty preview, 3x (96 px tall), centered.
