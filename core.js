@@ -1234,9 +1234,9 @@ export function flattenOver(pixels, background) {
 // Icon/Title"; TwlSDK BannerHeader). The low byte is the NTR version (1..3),
 // the high byte is the platform (0 = NTR, 1 = TWL animated icon).
 const BANNER_FORMATS = {
-  0x0001: { name: 'NTR v1', size: NTR_V1_SIZE, titleSlots: 6 },
-  0x0002: { name: 'NTR v2 (+ Chinese)', size: 0x940, titleSlots: 7 },
-  0x0003: { name: 'NTR v3 (+ Chinese, Korean)', size: 0xA40, titleSlots: 8 },
+  0x0001: { name: 'DS v1', size: NTR_V1_SIZE, titleSlots: 6 },
+  0x0002: { name: 'DS v2', size: 0x940, titleSlots: 7 },
+  0x0003: { name: 'DS v3', size: 0xA40, titleSlots: 8 },
   0x0103: { name: 'DSi animated', size: 0x23C0, titleSlots: 8 }
 };
 

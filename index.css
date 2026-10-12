@@ -39,6 +39,7 @@
   --success-bg: #dcfce7;
   --success-border: #bbf7d0;
   --success-text: #166534;
+  --success-badge: #166534;
 
   --warning: #d97706;
   --warning-bg: #fff7ed;
@@ -116,6 +117,7 @@
   --success-bg: #064e3b;
   --success-border: #047857;
   --success-text: #86efac;
+  --success-badge: #047857;
 
   --warning: #fde047;
   --warning-bg: #78350f;
@@ -168,6 +170,7 @@
     --success-bg: #064e3b;
     --success-border: #047857;
     --success-text: #86efac;
+    --success-badge: #047857;
 
     --warning: #fde047;
     --warning-bg: #78350f;
@@ -402,9 +405,8 @@ body {
   image-rendering: crisp-edges;
 }
 
-/* Banner.bin-loaded indicator, separate from the dropzone so it's obvious
-   the icon/title/text came from an imported banner.bin rather than a plain
-   image upload. Never shown for plain image uploads. */
+/* Banner.bin status, separate from the dropzone. Never shown for plain image
+   uploads. */
 .bin-loaded-card {
   position: relative;
   display: flex;
@@ -422,11 +424,6 @@ body {
   display: none !important;
 }
 
-.bin-preview-slot {
-  flex-shrink: 0;
-  line-height: 0;
-}
-
 /* Animated uploads: the browser plays the GIF/WebP, cropped like the canvas. */
 .crop-preview-anim {
   position: relative;
@@ -438,12 +435,6 @@ body {
   max-width: none;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
-}
-
-.bin-preview-slot .dropzone-preview {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--shape-xs);
 }
 
 .bin-loaded-card p {
@@ -466,8 +457,8 @@ body {
 }
 
 .crc-badge.valid {
-  background-color: var(--success);
-  color: #111827;
+  background-color: var(--success-badge);
+  color: #ffffff;
 }
 
 .crc-badge.warning {

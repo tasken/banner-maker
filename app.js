@@ -38,7 +38,6 @@ const btnPixelArtOff = document.getElementById('btn-pixelart-off');
 const btnPixelArtOn = document.getElementById('btn-pixelart-on');
 const transparencyInfo = document.getElementById('transparency-info');
 const binLoadedInfo = document.getElementById('bin-loaded-info');
-const binPreviewSlot = document.getElementById('bin-preview-slot');
 const binLoadedText = document.getElementById('bin-loaded-text');
 const btnRemoveBin = document.getElementById('btn-remove-bin');
 const paletteNote = document.getElementById('palette-note');
@@ -443,6 +442,7 @@ function hasTransparentPixel(rgba) {
 function setLoadedImage(img, src, rgba, width, height, icon = null) {
   loadedImage = img;
   indexedIcon = icon;
+  setPreviewScale2x(false);
   imageSource = createImageSource(rgba, width, height);
   imageSourceScale = width / img.width;
   transparencyInfo.classList.toggle('hidden', !hasTransparentPixel(rgba));
@@ -603,17 +603,12 @@ function handleBinSelect(file, token) {
         // Already a 32x32 square, so fit it as-is
         setLayoutMode('fit');
 
-        // Keep the dropzone itself in its default, empty prompt state so
-        // it's obvious the user can still click/drop a different image or
-        // .bin there. The live preview instead moves into the "banner
-        // loaded" card below, along with a Remove action, since only .bin
-        // uploads show this indicator (plain image uploads never do).
-        dropzonePrompt.classList.remove('hidden');
-        dropzoneFilename.classList.add('hidden');
-        dropzoneFilename.textContent = '';
-
-        binPreviewSlot.appendChild(cropPreviewCanvas);
+        dropzonePreviewWrapper.insertBefore(cropPreviewCanvas, dropzoneFilename);
+        dropzonePrompt.classList.add('hidden');
+        dropzoneFilename.textContent = `✓ ${file.name}`;
+        dropzoneFilename.classList.remove('hidden');
         cropPreviewCanvas.classList.remove('hidden');
+        cropPreviewAnim.classList.add('hidden');
 
         binLoadedText.innerHTML = `Imported ${escapeHtml(parsed.format.name)} banner ${crcBadgeHtml(parsed.crcChecks)}`;
         binLoadedInfo.classList.remove('hidden');
@@ -824,6 +819,9 @@ function updateBannerData({ processAnimation = true } = {}) {
 function renderPreview(palette, indices) {
   resizeCtx.putImageData(new ImageData(indicesToRgba(palette, indices), 32, 32), 0, 0);
   showIconPreview();
+  if (animationFrames && !animationFile) {
+    cropPreviewCtx.drawImage(resizeCanvas, 0, 0, CROP_PREVIEW_SIZE, CROP_PREVIEW_SIZE);
+  }
 }
 
 // Scales the 32x32 icon on resizeCanvas up onto the console mockup.
